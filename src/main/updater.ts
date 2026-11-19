@@ -1,7 +1,7 @@
 import { app, ipcMain, shell } from 'electron';
 import type { WebContents } from 'electron';
 import { request as httpsRequest } from 'node:https';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { readConfig } from './config';
 import { DEFAULT_DROP_HTML } from '../shared/releaseDrop';
@@ -21,7 +21,7 @@ import { reduceStatus, clampPercent, isNewer, installerUrl, shouldShowReleaseDro
  * `releases/latest` poll — semver-compare against the running version and show a
  * notify-only state linking the release page.
  *
- * Everything is gated on the `autoUpdate` HarnessConfig flag (default ON,
+ * Everything is gated on the `autoUpdate` HarnessConfig flag (default OFF,
  * Settings → General) and on `app.isPackaged` — dev runs never poll.
  *
  * ─── v0.3.7: why native updating never actually ran ──────────────────────────
@@ -124,9 +124,20 @@ function emit(status: UpdateStatus): void {
 
 function autoUpdateEnabled(): boolean {
   try {
-    return readConfig().autoUpdate !== false; // default ON
+    return readConfig().autoUpdate === true; // default OFF
   } catch {
-    return true;
+    return false;
+  }
+}
+
+/** True only when the packaged app was built with an update feed (electron-builder
+ *  `publish`). This build has none (`publish: null`), so every network path below
+ *  (native check, releases/latest fallback, release-notes fetch) is skipped. */
+function hasUpdateFeed(): boolean {
+  try {
+    return existsSync(join(process.resourcesPath, 'app-update.yml'));
+  } catch {
+    return false;
   }
 }
 
@@ -217,6 +228,7 @@ function fetchReleaseBody(version: string, done: (notes: string | undefined) => 
 
 /** Notify-only check against releases/latest (no download). Never throws. */
 function fallbackCheck(reason: string | undefined, force = false): void {
+  if (!hasUpdateFeed()) return;
   const now = Date.now();
   if (!force && now - lastFallbackCheck < FALLBACK_CACHE_MS) return;
   lastFallbackCheck = now;
@@ -290,6 +302,10 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
  * single blip no longer costs the session its ability to self-update.
  */
 async function runCheck(): Promise<{ ok: boolean; error?: string }> {
+  if (!hasUpdateFeed()) {
+    emit({ state: 'not-available' });
+    return { ok: true };
+  }
   emit({ state: 'checking' });
   try {
     // Hard-capped so a stalled feed request cannot leave the badge on 'checking'
@@ -453,7 +469,7 @@ export function initAutoUpdater(getWebContents: () => WebContents | null): void 
   // is the updater's own (analytics keeps a separate one that only exists when
   // telemetry initialised). Skipped when a preview is being forced, and the
   // fetch failing just means no page, never a broken boot.
-  if (!previewPath) {
+  if (!previewPath && hasUpdateFeed()) {
     try {
       const stampFile = join(app.getPath('userData'), 'last-run-version');
       let previous: string | null = null;

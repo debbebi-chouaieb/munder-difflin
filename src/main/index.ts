@@ -5383,11 +5383,11 @@ app.whenReady().then(() => {
 
   // Anonymous product analytics (PostHog) — the full contract lives in
   // TELEMETRY.md. No-op unless a build-time key was injected (official releases
-  // only), and gated on DO_NOT_TRACK + the telemetryEnabled config (opt-out).
+  // only), and gated on DO_NOT_TRACK + the telemetryEnabled config (opt-in, default off).
   analytics.init({
     stateDir: app.getPath('userData'),
     appVersion: app.getVersion(),
-    enabled: readConfig().telemetryEnabled !== false
+    enabled: readConfig().telemetryEnabled === true
   });
 
   // Warm the model catalog cache before any picker opens. The renderer reads

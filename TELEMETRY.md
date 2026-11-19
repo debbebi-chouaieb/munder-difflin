@@ -90,6 +90,13 @@ identifiers, or API keys. Nothing free-form — the property allowlist in
   event and disables the GeoIP lookup, so no IP address, country, city, postal
   code or coordinate is derived from your connection or stored on the event.
 
+## This build (ZetaBox)
+
+Telemetry and auto-update are **off by default** in this build: `telemetryEnabled` and `autoUpdate` default to
+`false` in `src/main/config.ts`, onboarding leaves "Share anonymous usage stats" unchecked, and
+`electron-builder.yml` has no update feed (`publish: null`). The analytics code is kept so upstream merges stay
+simple. `test/privacy-defaults.test.cjs` guards these defaults.
+
 ## Opting out
 
 Any one of these fully disables telemetry:

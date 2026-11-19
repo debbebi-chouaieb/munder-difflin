@@ -12,8 +12,9 @@ import { dirname } from 'node:path';
 import { getText } from './fetchText';
 import { parseHeroPayload, DEFAULT_HERO, type HeroPayload } from '../shared/heroPayload';
 
-const HERO_URL =
-  'https://raw.githubusercontent.com/chaitanyagiri/munder-difflin/main/docs/hero.json';
+/** null = no remote hero: this build must not fetch from the upstream project,
+ *  so the card shows the defaults compiled into the app. Set a URL to re-enable. */
+const HERO_URL: string | null = null;
 /** Plan copy and sponsors change on a human timescale. */
 const TTL_MS = 6 * 60 * 60 * 1000;
 
@@ -31,6 +32,7 @@ export async function loadHero(
   }
 
   try {
+    if (!HERO_URL) throw new Error('remote hero disabled');
     const body = await getText(HERO_URL, { timeoutMs: 8000 });
     // Parse the JSON and the SHAPE separately: valid JSON that is not a hero
     // payload must still degrade to defaults rather than render as undefined.

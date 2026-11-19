@@ -16,8 +16,9 @@ import { dirname } from 'node:path';
 import { getText } from './fetchText';
 import { parseModelCatalog, type ModelCatalog } from '../shared/modelCatalogPayload';
 
-const CATALOG_URL =
-  'https://raw.githubusercontent.com/chaitanyagiri/munder-difflin/main/docs/model-catalog.json';
+/** null = no remote catalog: this build must not fetch from the upstream project,
+ *  so the pickers use the catalog compiled into the app. Set a URL to re-enable. */
+const CATALOG_URL: string | null = null;
 
 /** Models ship on a human timescale, and a stale list costs the user nothing —
  *  every command field in the app stays editable. Six hours matches the hero
@@ -56,6 +57,7 @@ export async function loadModelCatalog(
   }
 
   try {
+    if (!CATALOG_URL) throw new Error('remote catalog disabled');
     const body = await getText(CATALOG_URL, { timeoutMs: 8000 });
     // Parse the JSON and the SHAPE separately: valid JSON that is not a catalog
     // must fall back, not reach a picker as undefined rows.

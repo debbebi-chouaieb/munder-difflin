@@ -287,7 +287,8 @@ export interface HarnessConfig {
    *  AC). Default OFF: the honest default is "survive sleep + catch up once on
    *  resume" (see the powerMonitor 'resume' handler), not "stay awake". */
   strongKeepalive?: boolean;
-  /** Auto-update from GitHub releases (v0.3.4). Default ON. Packaged builds
+  /** Auto-update from GitHub releases (v0.3.4). Default OFF in this build: it has
+   *  no update feed (electron-builder.yml `publish: null`). Packaged builds
    *  check on boot + every ~6h, download in the background, and show a
    *  "restart to update" toast — installation is always user-initiated. OFF
    *  disables checking entirely. (Mirrored in preload + renderer config.) */
@@ -306,7 +307,7 @@ export interface HarnessConfig {
    *  harness agents only; the user's global Claude theme is never touched. */
   terminalTheme?: 'light' | 'dark';
   /** Anonymous product analytics (PostHog) — the exact events/properties are
-   *  documented in TELEMETRY.md. Default ON (opt-out, like autoUpdate); builds
+   *  documented in TELEMETRY.md. Default OFF in this build (opt-in); builds
    *  without an injected key and environments with DO_NOT_TRACK set never send
    *  regardless of this flag. (Mirrored in preload + renderer config.) */
   telemetryEnabled?: boolean;
@@ -445,8 +446,8 @@ const DEFAULTS: HarnessConfig = {
   missions: [OPS_STANDUP_MISSION],
   notifications: false,
   strongKeepalive: false,
-  autoUpdate: true,
-  telemetryEnabled: true,
+  autoUpdate: false,
+  telemetryEnabled: false,
   multiWindow: true,
   tvShowOffices: false,
   officeTheme: 'office',

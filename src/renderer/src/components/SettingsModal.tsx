@@ -478,8 +478,8 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
     setAutoCompactPending(next);
   };
 
-  // ─── Auto-update (default ON; gates main's updater checks entirely) ────────
-  const [autoUpdateOn, setAutoUpdateOn] = useState<boolean>(config.autoUpdate !== false);
+  // ─── Auto-update (default OFF; gates main's updater checks entirely) ────────
+  const [autoUpdateOn, setAutoUpdateOn] = useState<boolean>(config.autoUpdate === true);
   const toggleAutoUpdate = async () => {
     const next = !autoUpdateOn;
     setAutoUpdateOn(next);
@@ -487,8 +487,8 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
     catch { setAutoUpdateOn(!next); }
   };
 
-  // ─── Anonymous usage stats (default ON = opt-out; contract in TELEMETRY.md) ─
-  const [telemetryOn, setTelemetryOn] = useState<boolean>(config.telemetryEnabled !== false);
+  // ─── Anonymous usage stats (default OFF = opt-in; contract in TELEMETRY.md) ─
+  const [telemetryOn, setTelemetryOn] = useState<boolean>(config.telemetryEnabled === true);
   const toggleTelemetry = async () => {
     const next = !telemetryOn;
     setTelemetryOn(next);
