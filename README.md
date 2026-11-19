@@ -434,6 +434,15 @@ Everything below is for contributors and for people who want to run an unrelease
   ```bash
   xcode-select --install
   ```
+  On Windows, install **Visual Studio Build Tools 2022** with the **Desktop development with C++**
+  workload, plus the individual component **MSVC v143 - VS 2022 C++ x64/x86 Spectre-mitigated libs
+  (Latest)**. `node-pty`'s winpty build requires the Spectre-mitigated libraries; without them
+  `npm install` fails with `error MSB8040`. To add the component from an admin terminal:
+  ```powershell
+  & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\setup.exe" modify `
+    --installPath "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools" `
+    --add Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre --passive --norestart
+  ```
 - At least one supported agent CLI on your `PATH`, one of **[Claude Code](https://claude.com/claude-code)**
   (`claude`, the default), **Antigravity** (`agy`), **OpenAI Codex** (`codex`), **xAI Grok** (`grok`),
   **Kimi Code** (`kimi`), **Gemini CLI** (`gemini`), **Qwen** (`qwen`), **OpenCode** (`opencode`),
