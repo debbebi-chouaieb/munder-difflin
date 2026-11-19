@@ -52,6 +52,7 @@ import {
 import { transcribeWithGroq, DEFAULT_GROQ_MODEL } from './freeflow';
 import { registerRealtimeIpc } from './realtime';
 import { ProjectService, registerProjectsIpc, projectsPusher } from './projects';
+import { busyTerminalIn, isLocalAbsolute, isNetworkPath, resolveAllowedRoot, ROOT_REFUSED } from './rootGuard';
 import { withoutWorkspaceRoot } from '../shared/project';
 import { registerRealtimeActionIpc } from './realtimeActions';
 import { initCompletionWatcher } from './realtimeCompletionWatcher';
@@ -2637,6 +2638,11 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // returned to the caller so the renderer records the same absolute path.
   opts.cwd = expandTilde(opts.cwd);
   if (opts.hive) opts.hive = { ...opts.hive, cwd: expandTilde(opts.hive.cwd) };
+  // Never start an agent in a network folder: even checking it (isRepo below)
+  // makes Windows authenticate to that server with the user's credentials.
+  if (isNetworkPath(opts.cwd) || (opts.hive && isNetworkPath(opts.hive.cwd))) {
+    return { ok: false, error: 'agents cannot run in a network folder' };
+  }
   // Which CLI is this? Explicit wins; else inferred from the binary
   // (claude/codex/grok/agy). Non-Claude providers skip every Claude-only spawn step
   // below. Persist the resolved provider onto opts (+ hive meta) so the registry
@@ -3247,6 +3253,7 @@ ipcMain.handle('config:setAgentTokenCap', (_evt, agentId: unknown, tokenCap: unk
 );
 ipcMain.handle('config:ensureHome', (_evt, path: unknown) => {
   if (typeof path !== 'string' || path.length === 0) return { ok: false, error: 'invalid path' };
+  if (isNetworkPath(path)) return { ok: false, error: ROOT_REFUSED };
   return ensureHarnessHome(path);
 });
 
@@ -3258,6 +3265,7 @@ ipcMain.handle('config:ensureHome', (_evt, path: unknown) => {
 ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
   const p = (payload ?? {}) as { newHome?: unknown; mode?: unknown };
   if (typeof p.newHome !== 'string' || !p.newHome) return { ok: false, error: 'invalid newHome' };
+  if (isNetworkPath(p.newHome)) return { ok: false, error: ROOT_REFUSED };
   const mode: 'move' | 'fresh' = p.mode === 'fresh' ? 'fresh' : 'move';
   // expandTilde BEFORE resolve: both UI callers feed a folder-dialog result
   // (always absolute), but the hive picker's recents list can serve a literal
@@ -3331,31 +3339,59 @@ ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
 });
 
 // ─── IPC: filesystem (sandboxed to a root) ──────────────────────────────────
-ipcMain.handle('fs:listDir', (_evt, root: unknown, rel: unknown) => {
+// Folders main already knows: the renderer may only use a root inside one of
+// these (rootGuard.ts). Read per call, so a new agent or workspace counts at once.
+const knownRoots = (): string[] => {
+  const cfg = readConfig();
+  return [
+    cfg.workspaceRoot ?? '',
+    cfg.harnessHome ?? '',
+    ...(cfg.registeredRepos ?? []),
+    ...ptyManager.list().map((p) => p.cwd),
+    // The original repo of each isolated agent: the IDE's history and compare
+    // panes run git there, not in the worktree.
+    ...worktreeOrigins.values(),
+    // Agents main recorded at spawn (registry.json), so the Git and Files tabs
+    // of a stopped agent keep working.
+    ...Object.values(hive.registry().agents).map((a) => a.cwd)
+  ].filter(Boolean);
+};
+const allowedRoot = (root: string): Promise<string | null> => resolveAllowedRoot(root, knownRoots());
+
+ipcMain.handle('fs:listDir', async (_evt, root: unknown, rel: unknown) => {
   if (typeof root !== 'string' || typeof rel !== 'string') return { ok: false, error: 'invalid args' };
-  return listDir(root, rel);
+  const allowed = await allowedRoot(root);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
+  return listDir(allowed, rel);
 });
-ipcMain.handle('fs:readFile', (_evt, root: unknown, rel: unknown) => {
+ipcMain.handle('fs:readFile', async (_evt, root: unknown, rel: unknown) => {
   if (typeof root !== 'string' || typeof rel !== 'string') return { ok: false, error: 'invalid args' };
-  return readFileText(root, rel);
+  const allowed = await allowedRoot(root);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
+  return readFileText(allowed, rel);
 });
 // Raw bytes for files the text reader refuses (images). The renderer cannot
 // load them off disk itself — the CSP has no `file:` source and no file
 // protocol is registered — so the bytes come through here and become a `blob:`
 // URL on the other side. Same root confinement as every other fs handler.
-ipcMain.handle('fs:readBinary', (_evt, root: unknown, rel: unknown) => {
+ipcMain.handle('fs:readBinary', async (_evt, root: unknown, rel: unknown) => {
   if (typeof root !== 'string' || typeof rel !== 'string') return { ok: false, error: 'invalid args' };
-  return readFileBinary(root, rel);
+  const allowed = await allowedRoot(root);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
+  return readFileBinary(allowed, rel);
 });
-ipcMain.handle('fs:writeFile', (_evt, root: unknown, rel: unknown, content: unknown) => {
+ipcMain.handle('fs:writeFile', async (_evt, root: unknown, rel: unknown, content: unknown) => {
   if (typeof root !== 'string' || typeof rel !== 'string' || typeof content !== 'string') {
     return { ok: false, error: 'invalid args' };
   }
-  return writeFileText(root, rel, content);
+  const allowed = await allowedRoot(root);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
+  return writeFileText(allowed, rel, content);
 });
 // v0.3.4: existence check for the terminal ⌘-click markdown flow (metadata only).
+// Any local path (it comes from agent output); never a network path.
 ipcMain.handle('fs:statAbs', (_evt, p: unknown) => {
-  if (typeof p !== 'string' || p.length > 4096 || p.includes('\0')) {
+  if (typeof p !== 'string' || p.length > 4096 || p.includes('\0') || isNetworkPath(p)) {
     return { exists: false, isFile: false, path: '' };
   }
   return statAbs(p);
@@ -3377,7 +3413,7 @@ ipcMain.handle('fs:statAbs', (_evt, p: unknown) => {
  *  argument above does not apply, and revealing a folder inside its parent is
  *  not what "open this folder" means to anyone. */
 ipcMain.handle('fs:revealPath', async (_evt, p: unknown) => {
-  if (typeof p !== 'string' || !p.length || p.length > 4096 || p.includes('\0')) {
+  if (typeof p !== 'string' || !p.length || p.length > 4096 || p.includes('\0') || isNetworkPath(p)) {
     return { ok: false, error: 'bad request' };
   }
   const st = await statAbs(p);
@@ -3388,86 +3424,112 @@ ipcMain.handle('fs:revealPath', async (_evt, p: unknown) => {
 });
 
 // ─── IPC: git ───────────────────────────────────────────────────────────────
-ipcMain.handle('git:isRepo', (_evt, cwd: unknown) => {
+ipcMain.handle('git:isRepo', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return false;
-  return isRepo(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return false;
+  return isRepo(allowed);
 });
 
 // The repo a cwd belongs to, following a linked worktree back to its main
 // checkout — the renderer groups the agent roster by this.
-ipcMain.handle('git:mainRepo', (_evt, cwd: unknown) => {
+ipcMain.handle('git:mainRepo', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string' || !cwd) return null;
-  return mainRepoRoot(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return null;
+  return mainRepoRoot(allowed);
 });
-ipcMain.handle('git:branch', (_evt, cwd: unknown) => {
+ipcMain.handle('git:branch', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid cwd' };
-  return getBranch(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return getBranch(allowed);
 });
-ipcMain.handle('git:status', (_evt, cwd: unknown) => {
+ipcMain.handle('git:status', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid cwd' };
-  return getStatus(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return getStatus(allowed);
 });
-ipcMain.handle('git:log', (_evt, cwd: unknown, n: unknown) => {
+ipcMain.handle('git:log', async (_evt, cwd: unknown, n: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid cwd' };
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
   const count = typeof n === 'number' ? Math.min(500, Math.max(1, n)) : 50;
-  return getLog(cwd, count);
+  return getLog(allowed, count);
 });
-ipcMain.handle('git:branches', (_evt, cwd: unknown) => {
+ipcMain.handle('git:branches', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid cwd' };
-  return getBranches(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return getBranches(allowed);
 });
-ipcMain.handle('git:aheadBehind', (_evt, cwd: unknown) => {
+ipcMain.handle('git:aheadBehind', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid cwd' };
-  return getAheadBehind(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return getAheadBehind(allowed);
 });
-ipcMain.handle('git:diff', (_evt, cwd: unknown, relPath: unknown) => {
+ipcMain.handle('git:diff', async (_evt, cwd: unknown, relPath: unknown) => {
   if (typeof cwd !== 'string' || typeof relPath !== 'string') {
     return { ok: false, error: 'invalid args' };
   }
-  return getDiff(cwd, relPath);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
+  return getDiff(allowed, relPath);
 });
 // ─── v0.3.4: history / compare / checkout (git visualization) ───────────────
-ipcMain.handle('git:logGraph', (_evt, cwd: unknown, n: unknown, skip: unknown) => {
+ipcMain.handle('git:logGraph', async (_evt, cwd: unknown, n: unknown, skip: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid args' };
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
   const count = Math.min(500, Math.max(1, typeof n === 'number' ? n : 200));
   const off = Math.max(0, typeof skip === 'number' ? skip : 0);
-  return getLogGraph(cwd, count, off);
+  return getLogGraph(allowed, count, off);
 });
-ipcMain.handle('git:commitFiles', (_evt, cwd: unknown, sha: unknown) => {
+ipcMain.handle('git:commitFiles', async (_evt, cwd: unknown, sha: unknown) => {
   if (typeof cwd !== 'string' || typeof sha !== 'string') return { error: 'invalid args' };
-  return getCommitFiles(cwd, sha);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return getCommitFiles(allowed, sha);
 });
-ipcMain.handle('git:showFile', (_evt, cwd: unknown, rev: unknown, relPath: unknown) => {
+ipcMain.handle('git:showFile', async (_evt, cwd: unknown, rev: unknown, relPath: unknown) => {
   if (typeof cwd !== 'string' || typeof rev !== 'string' || typeof relPath !== 'string') {
     return { ok: false, error: 'invalid args' };
   }
-  return getFileAtRev(cwd, rev, relPath);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
+  return getFileAtRev(allowed, rev, relPath);
 });
-ipcMain.handle('git:compareRefs', (_evt, cwd: unknown, base: unknown, head: unknown, mode: unknown) => {
+ipcMain.handle('git:compareRefs', async (_evt, cwd: unknown, base: unknown, head: unknown, mode: unknown) => {
   if (typeof cwd !== 'string' || typeof base !== 'string' || typeof head !== 'string') {
     return { error: 'invalid args' };
   }
-  return compareRefs(cwd, base, head, mode === 'two' ? 'two' : 'three');
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return compareRefs(allowed, base, head, mode === 'two' ? 'two' : 'three');
 });
-ipcMain.handle('git:worktrees', (_evt, cwd: unknown) => {
+ipcMain.handle('git:worktrees', async (_evt, cwd: unknown) => {
   if (typeof cwd !== 'string') return { error: 'invalid args' };
-  return listWorktrees(cwd);
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { error: ROOT_REFUSED };
+  return listWorktrees(allowed);
 });
 ipcMain.handle('git:checkout', async (_evt, cwd: unknown, ref: unknown, detach: unknown) => {
   if (typeof cwd !== 'string' || typeof ref !== 'string') return { ok: false, error: 'invalid args' };
+  const allowed = await allowedRoot(cwd);
+  if (!allowed) return { ok: false, error: ROOT_REFUSED };
   // Guard: never swap files under an actively-working agent. Objective signal
   // owned by main — any live pty whose cwd sits in this tree and emitted output
   // in the last 10s is treated as mid-run. (Idle-but-open terminals are fine:
   // checkoutRef additionally requires a clean tree, and TUIs redraw on fs
-  // changes gracefully.)
-  const busy = ptyManager.list().find((p) =>
-    (p.cwd === cwd || p.cwd.startsWith(cwd.endsWith('/') ? cwd : `${cwd}/`)) &&
-    Date.now() - p.lastOutputAt < 10_000
-  );
+  // changes gracefully.) Compared on real paths: git hands the renderer
+  // `D:/repo` while terminals report `D:\repo`.
+  const busy = await busyTerminalIn(ptyManager.list(), allowed);
   if (busy) {
     return { ok: false, error: `an agent is actively working in this repo (${busy.id}) — try again when it goes quiet` };
   }
-  return checkoutRef(cwd, ref, detach === true);
+  return checkoutRef(allowed, ref, detach === true);
 });
 
 // ─── IPC: roster mirror (shared between dev and a packaged build) ───────────
@@ -3572,7 +3634,7 @@ ipcMain.handle('skills:local', (_evt, cwd: unknown): LocalSkill[] => {
   const cwds = [
     ...(typeof cwd === 'string' && cwd ? [cwd] : []),
     ...(cfg.registeredRepos ?? [])
-  ];
+  ].filter(isLocalAbsolute);
   try {
     return listLocalSkills({ cwds, bundledDir: skillsResourceDir() });
   } catch (e) {
@@ -3693,6 +3755,9 @@ ipcMain.handle('kg:ingestFiles', (_evt, payload: unknown) => {
   const paths = Array.isArray(p.paths) ? p.paths.filter((x): x is string => typeof x === 'string') : [];
   const tags = Array.isArray(p.tags) ? p.tags.filter((x): x is string => typeof x === 'string') : undefined;
   const results = paths.map((srcPath) => {
+    // Network paths would make Windows authenticate to that server. Limiting
+    // this to known folders is tracked separately (docs/in-progress.md).
+    if (!isLocalAbsolute(srcPath)) return { ok: false as const, srcPath, error: ROOT_REFUSED };
     try {
       const r = knowledge.ingestFile(srcPath, { tags });
       return { ok: true as const, srcPath, docId: r.docId, chunkCount: r.chunkCount };
@@ -4062,14 +4127,18 @@ ipcMain.handle('hive:textSearch', (_evt, query: unknown) => {
 });
 
 // ─── IPC: GitHub issue ingestion (gh CLI) ────────────────────────────────────
-ipcMain.handle('github:issues', (_evt, cwd: unknown) =>
-  typeof cwd === 'string' ? listIssues(cwd) : { ok: false, error: 'no cwd' }
-);
+ipcMain.handle('github:issues', async (_evt, cwd: unknown) => {
+  if (typeof cwd !== 'string') return { ok: false, error: 'no cwd' };
+  const allowed = await allowedRoot(cwd);
+  return allowed ? listIssues(allowed) : { ok: false, error: ROOT_REFUSED };
+});
 
 // ─── IPC: GitHub CI status watcher (gh CLI) ──────────────────────────────────
-ipcMain.handle('github:ciRuns', (_evt, cwd: unknown) =>
-  typeof cwd === 'string' ? listCIRuns(cwd) : { ok: false, error: 'no cwd' }
-);
+ipcMain.handle('github:ciRuns', async (_evt, cwd: unknown) => {
+  if (typeof cwd !== 'string') return { ok: false, error: 'no cwd' };
+  const allowed = await allowedRoot(cwd);
+  return allowed ? listCIRuns(allowed) : { ok: false, error: ROOT_REFUSED };
+});
 
 // ─── IPC: desktop notifications toggle ──────────────────────────────────────
 ipcMain.handle('app:setNotifications', (_evt, val) => writeConfig({ notifications: val === true }));
