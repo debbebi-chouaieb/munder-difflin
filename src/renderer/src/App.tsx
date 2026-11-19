@@ -26,6 +26,13 @@ import { PixelPanel } from '@/components/PixelPanel';
 import { PixelButton } from '@/components/PixelButton';
 import { Icon } from '@/components/Icon';
 import { SidebarSplitter } from '@/components/SidebarSplitter';
+import { ProjectSidebar } from '@/components/ProjectSidebar';
+import { useProjects } from '@/store/projects';
+import {
+  PROJECT_SIDEBAR_DEFAULT_WIDTH,
+  PROJECT_SIDEBAR_MAX_WIDTH,
+  PROJECT_SIDEBAR_MIN_WIDTH
+} from '@/store/projectSidebar';
 import { acquireTerminal, notifyThemeChangeAll } from '@/components/terminalPool';
 import { FullscreenTerminal } from '@/components/FullscreenTerminal';
 import { TaskDetailOverlay } from '@/components/TaskDetailOverlay';
@@ -43,6 +50,11 @@ export function App() {
   useDirectionSync();
   // Let terminals that are ALREADY open follow a language switch too.
   useArabicTerminalSync();
+  // Workspace projects (ADR 0001): pull the list once, then follow main's pushes.
+  useEffect(() => useProjects.getState().connect(), []);
+  const projectSidebarCollapsed = useProjects((s) => s.collapsed);
+  const projectSidebarWidth = useProjects((s) => s.width);
+  const setProjectSidebarWidth = useProjects((s) => s.setWidth);
   const agent = useStore(selectedAgent);
   const agents = useStore(s => s.agents);
   const agentCount = agents.length;
@@ -398,6 +410,18 @@ export function App() {
         padding: 16,
         gap: 0
       }}>
+        <ProjectSidebar />
+        {!projectSidebarCollapsed && (
+          <SidebarSplitter
+            width={projectSidebarWidth}
+            onChange={setProjectSidebarWidth}
+            viewportWidth={vpWidth - sidebarWidth}
+            panelSide="left"
+            min={PROJECT_SIDEBAR_MIN_WIDTH}
+            max={PROJECT_SIDEBAR_MAX_WIDTH}
+            resetWidth={PROJECT_SIDEBAR_DEFAULT_WIDTH}
+          />
+        )}
         <div style={{ flex: 1, minHeight: 0, minWidth: 0, position: 'relative' }}>
           <OfficeFloor />
           <MemoryPanel />
@@ -429,7 +453,7 @@ export function App() {
         <SidebarSplitter
           width={sidebarWidth}
           onChange={setSidebarWidth}
-          viewportWidth={vpWidth}
+          viewportWidth={vpWidth - (projectSidebarCollapsed ? 0 : projectSidebarWidth)}
         />
 
         <div style={{

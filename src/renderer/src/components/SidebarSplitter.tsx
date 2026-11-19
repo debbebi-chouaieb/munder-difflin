@@ -1,33 +1,43 @@
 import { useEffect, useRef, useState } from 'react';
+import { dragSign, nextPanelWidth, type PanelSide } from './splitterRules';
 
 export interface SidebarSplitterProps {
   /** Current sidebar width in px. */
   width: number;
   /** Called with the new width (already clamped externally). */
   onChange: (px: number) => void;
-  /** Containing viewport width — used to clamp delta to a sane max. */
+  /** Width this panel and the floor share: the row width minus every OTHER
+   *  panel, so the floor always keeps its minimum. */
   viewportWidth: number;
   min?: number;
   max?: number;
+  /** Which side of the floor the panel sits on (see `dragSign`). */
+  panelSide?: PanelSide;
+  /** Width restored on double-click. */
+  resetWidth?: number;
 }
 
 /**
- * Vertical drag handle. Sits between the floor canvas (left) and the sidebar
- * (right). Drag left → wider sidebar. Cursor + pixel-stripe affordance.
+ * Vertical drag handle between the floor canvas and a sidebar. Cursor +
+ * pixel-stripe affordance.
  */
 export function SidebarSplitter({
-  width, onChange, viewportWidth, min = 320, max = 1200
+  width, onChange, viewportWidth, min = 320, max = 1200, panelSide = 'right', resetWidth = 420
 }: SidebarSplitterProps) {
-  const startRef = useRef<{ clientX: number; width: number } | null>(null);
+  const startRef = useRef<{ clientX: number; width: number; sign: 1 | -1 } | null>(null);
   const [active, setActive] = useState(false);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
       if (!startRef.current) return;
-      const delta = startRef.current.clientX - e.clientX; // left drag = positive delta → grow sidebar
-      const clampMax = Math.min(max, Math.max(min, viewportWidth - 360));
-      const next = Math.min(clampMax, Math.max(min, startRef.current.width + delta));
-      onChange(next);
+      onChange(nextPanelWidth({
+        startWidth: startRef.current.width,
+        dragPx: e.clientX - startRef.current.clientX,
+        sign: startRef.current.sign,
+        min,
+        max,
+        availableWidth: viewportWidth
+      }));
     };
     const onUp = () => {
       startRef.current = null;
@@ -50,11 +60,12 @@ export function SidebarSplitter({
   return (
     <div
       onMouseDown={(e) => {
-        startRef.current = { clientX: e.clientX, width };
+        const sign = dragSign(panelSide, document.documentElement.dir === 'rtl');
+        startRef.current = { clientX: e.clientX, width, sign };
         setActive(true);
         e.preventDefault();
       }}
-      onDoubleClick={() => onChange(420)}
+      onDoubleClick={() => onChange(resetWidth)}
       title="Drag to resize · double-click to reset"
       style={{
         width: 10,

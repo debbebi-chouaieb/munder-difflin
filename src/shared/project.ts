@@ -197,6 +197,26 @@ export function parseProjectsFile(raw: unknown): ProjectsFile {
   return file;
 }
 
+function normalizePath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/**
+ * The project an agent works in, from its working directory: the project whose
+ * folder is the cwd or contains it. Case-insensitive, because the workspace is a
+ * Windows folder and drive letters come back in either case. Agents in a git
+ * worktree under the hive home do not match; Phase 4 records their project.
+ */
+export function projectIdForCwd(cwd: string, projects: Pick<Project, 'id' | 'path'>[]): string | null {
+  if (!cwd) return null;
+  const target = normalizePath(cwd);
+  for (const project of projects) {
+    const root = normalizePath(project.path);
+    if (target === root || target.startsWith(`${root}/`)) return project.id;
+  }
+  return null;
+}
+
 /**
  * The workspace root is main-owned: it is set only through the validated folder
  * dialog (projects:pickWorkspace), never through a generic config patch.
