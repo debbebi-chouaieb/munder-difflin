@@ -51,6 +51,8 @@ import {
 } from './triggerHistory';
 import { transcribeWithGroq, DEFAULT_GROQ_MODEL } from './freeflow';
 import { registerRealtimeIpc } from './realtime';
+import { ProjectService, registerProjectsIpc, projectsPusher } from './projects';
+import { withoutWorkspaceRoot } from '../shared/project';
 import { registerRealtimeActionIpc } from './realtimeActions';
 import { initCompletionWatcher } from './realtimeCompletionWatcher';
 import type { TaskCard, InboxMessage } from './realtimeCompletionWatcher';
@@ -3198,7 +3200,11 @@ ipcMain.handle('integrations:test', async (_evt, payload: unknown) => {
 
 // ─── IPC: config ────────────────────────────────────────────────────────────
 ipcMain.handle('config:get', (): HarnessConfig => readConfig());
-ipcMain.handle('config:update', (_evt, patch: Partial<HarnessConfig>) => {
+ipcMain.handle('config:update', (_evt, rawPatch: Partial<HarnessConfig>) => {
+  // The workspace root is main-owned (ADR 0001): it is set only through the
+  // native dialog in projects:pickWorkspace, which validates it, so a renderer
+  // cannot point project scans (and later lead agents) at an arbitrary path.
+  const patch = withoutWorkspaceRoot(rawPatch ?? {});
   // FIRST RUN: every hive-bound service is started by bootstrapHiveServices(),
   // which runs once at app-ready and early-returns on `!hive.enabled()` — i.e.
   // whenever harnessHome is still null, which is exactly the state a fresh
@@ -4433,6 +4439,20 @@ ipcMain.handle('freeflow:transcribe', async (_evt, arg: unknown) => {
 // lives in ./realtime so this stays a single registration line.
 registerRealtimeIpc();
 
+// ─── IPC: workspace projects (ADR 0001) ──────────────────────────────────────
+// One project per top-level git folder of the workspace root; enabled/parallel
+// state per hive in <hive>/projects.json. First scan runs in app.whenReady.
+const projectService = new ProjectService({
+  workspaceRoot: () => readConfig().workspaceRoot ?? null,
+  setWorkspaceRoot: (root) => { writeConfig({ workspaceRoot: root }); },
+  hiveRoot: () => hive.root(),
+  commit: (message) => hive.commit(message),
+  globalAgentsDir: join(homedir(), '.claude', 'agents'),
+  push: projectsPusher(() => liveWebContents()),
+  log: (message) => console.error(message)
+});
+registerProjectsIpc(projectService);
+
 // ─── IPC: Realtime Michael voice ACTIONS (rt-5, Phase 2) ─────────────────────
 // Thin adapters over the SAME main fns the god PTY already uses. ALL of the safety
 // spine — soft-vs-destructive tiering, the two-step verbal echo-back confirm, the
@@ -5373,6 +5393,10 @@ function onSystemResume(reason: string): void {
 }
 
 app.whenReady().then(() => {
+  // First workspace scan (ADR 0001). An unreadable root is reported inside the
+  // snapshot; projects:list waits for this scan, so a window opened meanwhile
+  // never sees an empty workspace by mistake.
+  projectService.rescan().catch((e) => console.error('[projects] first scan failed:', e));
   // Realtime Michael mic-gate hygiene (rt-8 / Pam rt-10 nit): the voice session
   // opens the mic permission gate by persisting realtimeVoiceEnabled=true and
   // closes it on disconnect — but a hard crash/reload mid-session skips that

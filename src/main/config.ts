@@ -186,6 +186,9 @@ export interface HarnessConfig {
    *  launch-time hive picker. Maintained by writeConfig whenever harnessHome is
    *  set (onboarding finish, changeHome). Capped to a handful. */
   recentHives?: string[];
+  /** Workspace root (ADR 0001): each top-level git folder is a project. Null until
+   *  the user picks it in the project sidebar (projects:pickWorkspace). */
+  workspaceRoot?: string | null;
   /** Folders the user registered during onboarding (used as quick-picks). */
   registeredRepos: string[];
   /** When true, new agents are spawned with --permission-mode bypassPermissions. */
@@ -423,6 +426,7 @@ export interface HarnessConfig {
 const DEFAULTS: HarnessConfig = {
   onboardingComplete: false,
   harnessHome: null,
+  workspaceRoot: null,
   recentHives: [],
   registeredRepos: [],
   autoMode: true,

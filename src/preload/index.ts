@@ -5,6 +5,7 @@ export type { HireManifest } from '../shared/hire';
 import type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 export type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 import type { UpdateStatus } from '../shared/updateState';
+import type { ProjectResult, ProjectsSnapshot } from '../shared/project';
 export type { UpdateStatus } from '../shared/updateState';
 import type { ToolStatus } from '../shared/toolCatalog';
 export type { ToolStatus } from '../shared/toolCatalog';
@@ -265,6 +266,8 @@ export interface HarnessConfig {
   harnessHome: string | null;
   /** Recently-opened hive home folders (most-recent first). Mirrors src/main/config.ts. */
   recentHives?: string[];
+  /** Workspace root for the project sidebar. Mirrors src/main/config.ts. */
+  workspaceRoot?: string | null;
   registeredRepos: string[];
   autoMode: boolean;
   defaultCommand: string;
@@ -627,6 +630,25 @@ const api = {
   // ─── Dialog ──────────────────────────────────────────────────────────────
   chooseFolder: (): Promise<{ ok: true; path: string } | { ok: false; error: string }> =>
     ipcRenderer.invoke('dialog:chooseFolder'),
+
+  // ─── Workspace projects (ADR 0001) ───────────────────────────────────────
+  // Paths never cross this bridge: main builds them from the workspace root,
+  // and the root is only set through the native dialog in pickWorkspace.
+  listProjects: (): Promise<ProjectsSnapshot> => ipcRenderer.invoke('projects:list'),
+  rescanProjects: (): Promise<ProjectsSnapshot> => ipcRenderer.invoke('projects:rescan'),
+  pickWorkspace: (): Promise<ProjectResult> => ipcRenderer.invoke('projects:pickWorkspace'),
+  clearWorkspace: (): Promise<ProjectResult> => ipcRenderer.invoke('projects:clearWorkspace'),
+  setProjectEnabled: (id: string, enabled: boolean): Promise<ProjectResult> =>
+    ipcRenderer.invoke('projects:setEnabled', id, enabled),
+  setProjectParallel: (id: string, parallel: boolean): Promise<ProjectResult> =>
+    ipcRenderer.invoke('projects:setParallel', id, parallel),
+  setProjectZetahubKey: (id: string, key: string | null): Promise<ProjectResult> =>
+    ipcRenderer.invoke('projects:setZetahubKey', id, key),
+  onProjectsChanged: (cb: (snapshot: ProjectsSnapshot) => void): (() => void) => {
+    const listener = (_e: IpcRendererEvent, payload: ProjectsSnapshot) => cb(payload);
+    ipcRenderer.on('projects:changed', listener);
+    return () => ipcRenderer.removeListener('projects:changed', listener);
+  },
 
   // ─── Terminal.app ────────────────────────────────────────────────────────
   openTerminalAt: (cwd: string): Promise<{ ok: boolean; error?: string }> =>

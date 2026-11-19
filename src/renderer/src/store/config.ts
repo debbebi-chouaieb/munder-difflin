@@ -64,6 +64,8 @@ export interface HarnessConfig {
   /** Recently-opened hive home folders (most-recent first) for the launch picker.
    *  Mirrors src/main/config.ts. */
   recentHives?: string[];
+  /** Workspace root for the project sidebar. Mirrors src/main/config.ts. */
+  workspaceRoot?: string | null;
   registeredRepos: string[];
   autoMode: boolean;
   /** May the orchestrator ("Michael") spin up agents on its own? Default FALSE,
