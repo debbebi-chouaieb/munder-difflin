@@ -42,6 +42,8 @@ function ExpandedSidebar({ onHide }: { onHide: () => void }) {
   const actionError = useProjects((s) => s.actionError);
   const pickWorkspace = useProjects((s) => s.pickWorkspace);
   const rescan = useProjects((s) => s.rescan);
+  const floorMode = useProjects((s) => s.floorMode);
+  const setFloorMode = useProjects((s) => s.setFloorMode);
   const agents = useStore((s) => s.agents);
   const select = useStore((s) => s.select);
 
@@ -61,6 +63,16 @@ function ExpandedSidebar({ onHide }: { onHide: () => void }) {
         >
           {root ? workspaceLabel(root) : t('projectSidebar.workspace')}
         </span>
+        {root && (
+          <PixelButton
+            variant="ghost"
+            size="sm"
+            onClick={() => setFloorMode(floorMode === 'projects' ? 'classic' : 'projects')}
+            title={t('projectSidebar.floorTitle')}
+          >
+            {floorMode === 'projects' ? t('projectSidebar.floorClassic') : t('projectSidebar.floorProjects')}
+          </PixelButton>
+        )}
         {root && (
           <PixelButton variant="ghost" size="sm" onClick={() => void rescan()} title={t('projectSidebar.rescanTitle')}>
             {t('projectSidebar.rescan')}

@@ -1445,6 +1445,11 @@
       "fileTooLarge": "projects.json 过大，更改未保存。",
       "workspaceNotLocal": "工作区必须是本机上的文件夹。",
       "workspaceUnreadable": "无法读取工作区文件夹。"
-    }
+    },
+    "cafe": "咖啡角",
+    "floorProjects": "房间",
+    "floorClassic": "经典",
+    "floorTitle": "在项目房间楼层和经典办公室楼层之间切换。代理会继续运行。",
+    "themeWhileRooms": "项目房间楼层已开启。请在项目菜单中切换到经典楼层后再选择主题。"
   }
 }

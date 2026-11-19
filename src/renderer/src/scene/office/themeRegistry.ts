@@ -13,6 +13,7 @@
 // (uncommitted human WIP) — the office theme references its existing exports.
 
 import type { Texture } from 'pixi.js';
+import type { FloorRoom } from './roomLayout';
 import { colors } from '@/design/tokens';
 import {
   CAST_BY_NAME,
@@ -100,6 +101,10 @@ export interface AnchorConfig {
   calendar: Tile;
   boards: Tile;
   clock: Tile;
+  /** ASK ME board. Absent: the office's spot (14,10). */
+  askMe?: Tile;
+  /** Steam over the coffee machine. Absent: the office's spot (26,17). */
+  machine?: Tile;
 }
 
 /** Theme palette. `background` is the canvas clear color; `noteColors` are the
@@ -119,7 +124,9 @@ export interface ThemeCast {
 
 /** The full contract a theme must supply. See report §A (theme contract). */
 export interface ThemeConfig {
-  id: ThemeId;
+  /** 'projects' is the generated floor (ADR 0002): built at runtime, never
+   *  stored in config.officeTheme and never offered by the theme picker. */
+  id: ThemeId | 'projects';
   /** Raw Tiled JSON text; parsed + tileset-patched by themeLoader. */
   mapRaw: string;
   /** Ordered atlases — order matches both the texture load order and the map's
@@ -137,6 +144,8 @@ export interface ThemeConfig {
   monitor: MonitorConfig;
   palette: PaletteConfig;
   cast: ThemeCast;
+  /** Generated floors only: the rooms, their seats and where labels go. */
+  rooms?: FloorRoom[];
 }
 
 /** The existing office, expressed as a theme. Values are copied verbatim from

@@ -13,6 +13,11 @@ import { hexToNumber, DEFAULT_CHARACTER } from './cast';
 import { pickSoloLine, pickExchange, type BreakSpot } from './cafeteriaLines';
 import { colors } from '@/design/tokens';
 import { loadTheme, resolveThemeMap, themeTilesetUrls } from './themeLoader';
+import { buildProjectFloor, type ProjectFloor } from './roomLayout';
+import { projectsTheme } from './projectTheme';
+import { RoomLights, ROOM_LIGHTS_Z } from './RoomLights';
+import { FLOOR_PENDING, useProjectFloor } from './useProjectFloor';
+import { pickSeat, resolveAnchors, roomDarkness, roomIdForAgent, TECH_LEADS_ROOM, walkTimeoutSeconds } from './projectFloorSpec';
 import {
   installContextLossRecovery, planInitFailure, DEFAULT_MAX_INIT_RETRIES
 } from './glRecovery';
@@ -181,6 +186,12 @@ export function OfficeFloor() {
   // The active office theme (store mirror of config.officeTheme). Changing it
   // tears down and rebuilds the whole scene on the new map/cast (see deps below).
   const officeTheme = useStore((s) => s.officeTheme);
+  // The Projects floor (ADR 0002): one room per ticked project. Its key changes
+  // only when rooms are added, removed or resized, and rebuilds the scene.
+  // Called before the scene effect below on purpose: its effect updates
+  // specRef/tickedRef, and effects run in declaration order, so the scene's
+  // init reads the refs for the key it was rebuilt for.
+  const projectFloor = useProjectFloor();
 
   // Is the floor actually on screen? A fullscreen terminal or file editor covers
   // it completely, and a hidden window shows nothing at all — but the Pixi ticker
@@ -228,6 +239,9 @@ export function OfficeFloor() {
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
+    // Wait for the project list (at most a moment) so a Rooms user does not get
+    // a classic floor built and torn down on every start.
+    if (projectFloor.key === FLOOR_PENDING) return;
     while (host.firstChild) host.removeChild(host.firstChild);
 
     const mountId = ++mountIdRef.current;
@@ -243,7 +257,20 @@ export function OfficeFloor() {
 
     const init = async () => {
       // Load the active theme bundle (falls back to 'office' on a bad/absent bundle).
-      const theme = await loadTheme(officeTheme);
+      let generated: ProjectFloor | null = null;
+      if (projectFloor.active) {
+        try {
+          generated = buildProjectFloor({
+            ...projectFloor.specRef.current,
+            labels: { ceo: t('projectSidebar.ceo'), techLeads: t('projectSidebar.techLeads'), cafe: t('projectSidebar.cafe') }
+          });
+        } catch (e) {
+          // A layout bug must not leave a blank floor: show the classic one.
+          console.error('[OfficeFloor] project floor layout failed, using the classic floor:', e);
+        }
+      }
+      const theme = generated ? projectsTheme(generated) : await loadTheme(officeTheme);
+      const tickedAtBuild = projectFloor.tickedRef.current;
       await app.init({
         background: hexNum(theme.palette.background),
         antialias: false,
@@ -288,6 +315,11 @@ export function OfficeFloor() {
       const mapRenderer = new TiledMapRenderer(resolveThemeMap(theme), tilesetTextures);
       world.addChild(mapRenderer.getContainer());
       const charLayer = mapRenderer.getCharacterContainer();
+      // Prop positions and walk give-up times. The hand-made floors keep their
+      // original values; the generated floor uses its own anchors and, being
+      // larger, a longer walk timeout.
+      const anchorsAt = resolveAnchors(theme.anchors, !!theme.rooms);
+      const WALK_TIMEOUT_S = walkTimeoutSeconds(!!theme.rooms, mapRenderer.width, mapRenderer.height);
       const tileCount = mapRenderer.getContainer().children.reduce(
         (n, c) => n + ((c as Container).children?.length ?? 0), 0);
       console.log(`[OfficeFloor] map ${mapRenderer.width}x${mapRenderer.height}, ${tileCount} tile sprites rendered`);
@@ -333,15 +365,21 @@ export function OfficeFloor() {
       // conference-room chairs as overflow. Each agent claims one and stays there;
       // they never wander off it (except when blocked, or on a coffee break).
       const seatTiles: Tile[] = [];
+      // Room of each seat, index-aligned with seatTiles (Projects floor only;
+      // undefined on the hand-made floors and for overflow seats).
+      const seatRoom: (string | undefined)[] = [];
+      const seatRoomIndex = new Map<string, string>();
+      for (const room of theme.rooms ?? []) for (const name of room.seatNames) seatRoomIndex.set(name, room.id);
       const seatSeen = new Set<string>();
-      const addSeat = (t?: Tile) => {
+      const addSeat = (t?: Tile, roomId?: string) => {
         if (!t) return;
         const k = `${t.x},${t.y}`;
         if (seatSeen.has(k)) return;
         seatSeen.add(k);
         seatTiles.push({ x: t.x, y: t.y });
+        seatRoom.push(roomId);
       };
-      for (const name of theme.primarySeatNames) addSeat(mapRenderer.getSpawnPoint(name));
+      for (const name of theme.primarySeatNames) addSeat(mapRenderer.getSpawnPoint(name), seatRoomIndex.get(name));
       const addZoneSeats = (zone: string) => {
         const z = mapRenderer.getZone(zone);
         if (!z) return;
@@ -376,14 +414,20 @@ export function OfficeFloor() {
       if (waitTiles.length === 0) waitTiles.push(entrance);
 
       // Seat 0 is desk-ceo — "Michael's room" — reserved for the god agent.
-      // All other workers claim seats from 1 onward.
+      // All other workers claim seats from 1 onward. On the Projects floor each
+      // seat belongs to a room, and an agent claims a seat in its own room (its
+      // project when ticked, otherwise the tech-leads room).
       const GOD_SEAT = 0;
+      const roomById = new Map((theme.rooms ?? []).map((room) => [room.id, room]));
+      const firstFreeSeat = (roomId?: string): number | null => {
+        const seat = pickSeat(seatClaims, seatRoom, roomId);
+        if (seat !== null) seatClaims.add(seat);
+        return seat;
+      };
       const claimSeat = (agent: Agent): number | null => {
         if (agent.isGod) { seatClaims.add(GOD_SEAT); return GOD_SEAT; }
-        for (let i = 1; i < seatTiles.length; i++) {
-          if (!seatClaims.has(i)) { seatClaims.add(i); return i; }
-        }
-        return null;
+        if (!theme.rooms) return firstFreeSeat();
+        return firstFreeSeat(roomIdForAgent(agent, tickedAtBuild)) ?? firstFreeSeat(TECH_LEADS_ROOM);
       };
 
       // Face a seated agent toward their desk (the adjacent non-walkable
@@ -492,8 +536,9 @@ export function OfficeFloor() {
 
       const machineG = new Graphics(); // steam over the counter machine while brewing
       machineG.eventMode = 'none';
-      machineG.position.set(26 * ts0, 17 * ts0);
-      machineG.zIndex = 19 * ts0;
+      const machineAt = anchorsAt.machine;
+      machineG.position.set(machineAt.x * ts0, machineAt.y * ts0);
+      machineG.zIndex = (machineAt.y + 2) * ts0;
       charLayer.addChild(machineG);
       let machineBusy = 0;
       const drawMachine = (t: number): void => {
@@ -581,7 +626,7 @@ export function OfficeFloor() {
             case 'toMachine':
             case 'toSink':
             case 'toTrayBack':
-              if (run.timer > 20) finishRun(rt); // never arrived — give up
+              if (run.timer > WALK_TIMEOUT_S) finishRun(rt); // never arrived — give up
               break;
             case 'taking':
               if (run.timer >= 0.8) startRunLeg(rt, 'toMachine');
@@ -740,7 +785,7 @@ export function OfficeFloor() {
           if (!b) continue;
           if (b.phase === 'walking') {
             b.timer += dt;
-            if (b.timer > 20) endBreak(id, rt);   // never arrived — give up
+            if (b.timer > WALK_TIMEOUT_S) endBreak(id, rt);   // never arrived — give up
             continue;
           }
           // lingering
@@ -873,7 +918,7 @@ export function OfficeFloor() {
           err.timer += dt;
           const spot = ERRAND_SPOTS[err.idx];
           if (err.phase === 'walking') {
-            if (err.timer > 20) { releaseErrand(rt); rt.character.startWandering(); }
+            if (err.timer > WALK_TIMEOUT_S) { releaseErrand(rt); rt.character.startWandering(); }
             continue;
           }
           // doing: animate the spot; watering + smoking complete via their
@@ -1119,17 +1164,22 @@ export function OfficeFloor() {
       // a click runs the real close flow (window.close() → the main process
       // intercepts while agents run → the "Quitting now?" dialog with its
       // closing-time option). The office clock literally opens quitting time.
-      const clockG = new Graphics();
-      clockG.eventMode = 'static';
-      clockG.cursor = 'pointer';
-      clockG.position.set(theme.anchors.clock.x * ts0, theme.anchors.clock.y * ts0);
-      clockG.hitArea = { contains: (x: number, y: number) => x >= 0 && x <= 16 && y >= 0 && y <= 32 };
-      clockG.zIndex = 3 * ts0;
-      clockG.on('pointertap', (ev) => {
-        ev.stopPropagation();
-        window.close(); // intercepted by the main process while PTYs are alive
-      });
-      charLayer.addChild(clockG);
+      // The hotspot is invisible and relies on the clock drawn in the map art;
+      // the generated Projects floor has no clock art, so it gets no hotspot
+      // (an invisible quit button would be a trap).
+      if (!theme.rooms) {
+        const clockG = new Graphics();
+        clockG.eventMode = 'static';
+        clockG.cursor = 'pointer';
+        clockG.position.set(theme.anchors.clock.x * ts0, theme.anchors.clock.y * ts0);
+        clockG.hitArea = { contains: (x: number, y: number) => x >= 0 && x <= 16 && y >= 0 && y <= 32 };
+        clockG.zIndex = 3 * ts0;
+        clockG.on('pointertap', (ev) => {
+          ev.stopPropagation();
+          window.close(); // intercepted by the main process while PTYs are alive
+        });
+        charLayer.addChild(clockG);
+      }
 
       // ─── The ASK ME board: tasks waiting on the HUMAN, first class ─────────
       // Hangs on the right wall run (between the second doorway and the war
@@ -1140,8 +1190,9 @@ export function OfficeFloor() {
       const askG = new Graphics();
       askG.eventMode = 'static';
       askG.cursor = 'pointer';
-      askG.position.set(14 * tsB + 25, 10 * tsB);
-      askG.zIndex = 11 * tsB;
+      const askAt = anchorsAt.askMe;
+      askG.position.set(askAt.x * tsB + 25, askAt.y * tsB);
+      askG.zIndex = (askAt.y + 1) * tsB;
       askG.on('pointertap', (ev) => {
         ev.stopPropagation();
         const st = useStore.getState();
@@ -1197,9 +1248,9 @@ export function OfficeFloor() {
         stand: Tile;
         thought: string;
       }
-      const PIN_STAND: Tile = { x: 8, y: 11 };      // under the blockers board
-      const TAKE_STAND: Tile = { x: 9, y: 11 };     // under the todo board
-      const ARCHIVE_STAND: Tile = { x: 12, y: 11 }; // beside the archive table
+      const PIN_STAND: Tile = anchorsAt.stands.pin;         // under the blockers board
+      const TAKE_STAND: Tile = anchorsAt.stands.take;       // under the todo board
+      const ARCHIVE_STAND: Tile = anchorsAt.stands.archive; // beside the archive table
       /** What the boards currently SHOW (lags the ledger while moves play). */
       let visualTasks = new Map<string, BoardTask>();
       const moveQueue: BoardMove[] = [];
@@ -1287,7 +1338,7 @@ export function OfficeFloor() {
         if (askCount > 0) drawAskBoard(askPulse);
         // global watchdog: if anything has been in flight too long, hard-sync
         moveWatchdog += dt;
-        if (moveWatchdog > 30 && busyActors.size > 0) {
+        if (moveWatchdog > WALK_TIMEOUT_S + 10 && busyActors.size > 0) {
           moveWatchdog = 0;
           for (const id of [...busyActors]) {
             busyActors.delete(id);
@@ -1402,6 +1453,7 @@ export function OfficeFloor() {
           spawnTile: entrance, // walk in from the office door
           glowColor: hexNum(colors.accent[agent.accent]) ?? hexToNumber(member.shirt),
           onClick: (id) => useStore.getState().select(id),
+          wanderBounds: seatIndex != null ? roomById.get(seatRoom[seatIndex] ?? '')?.rect : undefined,
         });
         character.show(charLayer);
         const rt: Runtime = { character, seatIndex, waitTile, charName };
@@ -1680,6 +1732,35 @@ export function OfficeFloor() {
         }
       };
 
+      // ─── Room lights (Projects floor, ADR 0002) ─────────────────────────────
+      // A project room is lit while one of its agents works and dimmed when all
+      // are idle; a room whose project was just unticked goes dark before the
+      // floor is rebuilt without it. Targets are recomputed twice a second.
+      const roomLights = theme.rooms ? new RoomLights(theme.rooms, mapRenderer.tileSize, ROOM_LIGHTS_Z) : null;
+      if (roomLights) charLayer.addChild(roomLights.container);
+      let lightsClock = 0;
+      const updateRoomLights = (dt: number): void => {
+        if (!roomLights || !theme.rooms) return;
+        lightsClock -= dt;
+        if (lightsClock <= 0) {
+          lightsClock = 0.5;
+          const statusesByRoom = new Map<string, string[]>();
+          for (const agent of useStore.getState().agents) {
+            const rt = runtimes.get(agent.id);
+            const roomId = rt?.seatIndex != null ? seatRoom[rt.seatIndex] : undefined;
+            if (!roomId) continue;
+            const list = statusesByRoom.get(roomId) ?? [];
+            list.push(agent.status);
+            statusesByRoom.set(roomId, list);
+          }
+          const leaving = projectFloor.leavingRef.current;
+          for (const room of theme.rooms) {
+            roomLights.setTarget(room.id, roomDarkness(room.kind, statusesByRoom.get(room.id) ?? [], leaving.has(room.id)));
+          }
+        }
+        roomLights.update(dt);
+      };
+
       const onTick = (ticker: Ticker) => {
         const dt = ticker.deltaMS / 1000;
         camera.update(dt);
@@ -1696,6 +1777,7 @@ export function OfficeFloor() {
         updateBossAura(dt);
         updateDeskLife(dt);
         updateBoardMoves(dt);
+        updateRoomLights(dt);
         resolveBubbleOverlaps();
         for (let i = envelopes.length - 1; i >= 0; i--) {
           if (envelopes[i].update(dt)) {
@@ -1771,7 +1853,7 @@ export function OfficeFloor() {
       appRef.current = null;
       while (host.firstChild) host.removeChild(host.firstChild);
     };
-  }, [officeTheme, glGeneration, i18n.language]);
+  }, [officeTheme, glGeneration, i18n.language, projectFloor.key]);
 
   return (
     <div

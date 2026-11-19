@@ -9,6 +9,13 @@ import { PROJECT_SIDEBAR_DEFAULT_WIDTH, clampProjectSidebarWidth } from './proje
 
 const LS_COLLAPSED = 'cth.projectSidebarCollapsed';
 const LS_WIDTH = 'cth.projectSidebarWidth';
+const LS_FLOOR_MODE = 'cth.floorMode';
+
+export type FloorMode = 'projects' | 'classic';
+
+function readFloorMode(): FloorMode {
+  try { return window.localStorage.getItem(LS_FLOOR_MODE) === 'classic' ? 'classic' : 'projects'; } catch { return 'projects'; }
+}
 
 interface ProjectsState {
   snapshot: ProjectsSnapshot;
@@ -18,6 +25,10 @@ interface ProjectsState {
   collapsed: boolean;
   width: number;
   setCollapsed: (collapsed: boolean) => void;
+  /** 'projects': the generated floor once a workspace is picked (default);
+   *  'classic': the configured office theme. Switching never closes agents. */
+  floorMode: FloorMode;
+  setFloorMode: (mode: FloorMode) => void;
   setWidth: (px: number) => void;
   /** Pulls the snapshot and follows pushes. Returns the unsubscribe function. */
   connect: () => () => void;
@@ -65,6 +76,11 @@ export const useProjects = create<ProjectsState>((set) => {
     loaded: false,
     actionError: null,
     collapsed: readBool(LS_COLLAPSED),
+    floorMode: readFloorMode(),
+    setFloorMode: (floorMode) => {
+      write(LS_FLOOR_MODE, floorMode);
+      set({ floorMode });
+    },
     width: readWidth(),
     setCollapsed: (collapsed) => {
       write(LS_COLLAPSED, collapsed ? '1' : '0');

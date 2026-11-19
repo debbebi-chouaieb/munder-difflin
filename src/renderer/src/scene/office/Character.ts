@@ -3,6 +3,7 @@ import { CharacterSprite, type Direction, type AnimState } from './CharacterSpri
 import { findPath } from './pathfinding';
 import type { TiledMapRenderer } from './TiledMapRenderer';
 import { ThoughtBubble } from './ThoughtBubble';
+import { pickWanderTarget } from './wander';
 import { colors } from '@/design/tokens';
 
 // Adapted from shahar061/the-office (office/characters/Character.ts).
@@ -91,6 +92,9 @@ interface CharacterOptions {
   /** Direction faced while seated. Default 'down' so the face is toward the user. */
   seatDirection?: Direction;
   onClick?: (agentId: string) => void;
+  /** Tiles idle wandering may pick (the agent's room on the Projects floor).
+   *  Absent: anywhere within a few tiles, as on the hand-made floors. */
+  wanderBounds?: { x: number; y: number; width: number; height: number };
 }
 
 export class Character {
@@ -158,6 +162,7 @@ export class Character {
   private smokeT = -1;                // -1 = not smoking (the boss's cigar)
   private smokeDur = 0;
   private onSmokeDone: (() => void) | null = null;
+  private readonly wanderBounds?: { x: number; y: number; width: number; height: number };
 
   constructor(options: CharacterOptions) {
     this.agentId = options.agentId;
@@ -166,6 +171,7 @@ export class Character {
     this.deskTile = options.seatTile;
     this.seatDirection = options.seatDirection ?? 'down';
     this.onClick = options.onClick;
+    this.wanderBounds = options.wanderBounds;
 
     // Appear at the spawn tile (the door) and walk in from there.
     const start = options.spawnTile ?? this.deskTile;
@@ -942,19 +948,12 @@ export class Character {
     if (this.idleTimer < this.idleWanderDelay) return;
     this.idleTimer = 0;
     this.idleWanderDelay = 1 + Math.random() * 3;
-    // Pick a nearby walkable tile and stroll to it.
-    const cur = this.getTilePosition();
-    const range = 6;
-    for (let attempt = 0; attempt < 14; attempt++) {
-      const tx = cur.x + Math.floor(Math.random() * range * 2) - range;
-      const ty = cur.y + Math.floor(Math.random() * range * 2) - range;
-      if ((tx !== cur.x || ty !== cur.y) && this.mapRenderer.isWalkable(tx, ty)) {
-        const wasWandering = this.wandering;
-        this.moveTo({ x: tx, y: ty });   // moveTo() leaves state='walk'
-        this.wandering = wasWandering;   // keep wandering through the walk
-        return;
-      }
-    }
+    // Pick a nearby walkable tile (inside the room, if bounded) and stroll to it.
+    const target = pickWanderTarget(this.getTilePosition(), this.wanderBounds, (x, y) => this.mapRenderer.isWalkable(x, y));
+    if (!target) return;
+    const wasWandering = this.wandering;
+    this.moveTo(target);               // moveTo() leaves state='walk'
+    this.wandering = wasWandering;     // keep wandering through the walk
   }
 
   destroy(): void {

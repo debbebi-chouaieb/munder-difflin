@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { HarnessConfig } from '@/store/config';
 import { useStore } from '@/store/store';
+import { useProjects } from '@/store/projects';
 import { disposeTerminal } from './terminalPool';
 import { PixelPanel } from './PixelPanel';
 import { PixelButton } from './PixelButton';
@@ -34,6 +35,7 @@ export function OfficeThemePicker({ config }: { config: HarnessConfig }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
 
+  const roomsFloorActive = useProjects((s) => s.floorMode === 'projects' && !!s.snapshot.workspaceRoot);
   const archiveAgent = useStore((s) => s.archiveAgent);
   const setOfficeTheme = useStore((s) => s.setOfficeTheme);
 
@@ -115,8 +117,15 @@ export function OfficeThemePicker({ config }: { config: HarnessConfig }) {
         </PixelButton>
       </div>
 
+      {/* On the Projects floor a theme switch would archive agents and change
+          nothing on screen, so the grid waits until the classic floor is back. */}
+      {enabled && roomsFloorActive && (
+        <p style={{ margin: '12px 0 0', fontSize: 12, lineHeight: '16px', color: 'var(--cth-ink-500)' }}>
+          {t('projectSidebar.themeWhileRooms')}
+        </p>
+      )}
       {/* Theme picker grid (only when the flag is on) */}
-      {enabled && (
+      {enabled && !roomsFloorActive && (
         <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
           {THEME_META.map((theme) => {
             const isCurrent = theme.id === current;

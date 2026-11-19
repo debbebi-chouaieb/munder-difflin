@@ -1445,6 +1445,11 @@
       "fileTooLarge": "projects.json is too large. Changes are not saved.",
       "workspaceNotLocal": "The workspace must be a folder on this computer.",
       "workspaceUnreadable": "The workspace folder cannot be read."
-    }
+    },
+    "cafe": "Café",
+    "floorProjects": "Rooms",
+    "floorClassic": "Classic",
+    "floorTitle": "Switch between the project rooms floor and the classic office floor. Agents keep running.",
+    "themeWhileRooms": "The project rooms floor is on. Switch to the classic floor in the projects menu to choose a theme."
   }
 }
