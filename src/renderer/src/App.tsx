@@ -26,6 +26,7 @@ import { PixelPanel } from '@/components/PixelPanel';
 import { PixelButton } from '@/components/PixelButton';
 import { Icon } from '@/components/Icon';
 import { SidebarSplitter } from '@/components/SidebarSplitter';
+import { AGENT_PANEL_MIN_WIDTH, fitPanelWidths } from '@/components/splitterRules';
 import { ProjectSidebar } from '@/components/ProjectSidebar';
 import { useProjects } from '@/store/projects';
 import {
@@ -91,6 +92,17 @@ export function App() {
   const [quitWarn, setQuitWarn] = useState<{ ptyCount: number } | null>(null);
   const [closing, setClosing] = useState<ClosingTimeState | null>(null);
   const [vpWidth, setVpWidth] = useState<number>(window.innerWidth);
+  // The agent panel gives way first, so the project splitter only reserves the
+  // agent minimum: budgeting against the drawn agent width would ratchet, as a
+  // narrower project panel lets the agent panel grow back and caps the next drag.
+  const panelWidths = fitPanelWidths({
+    viewportWidth: vpWidth,
+    agentWidth: sidebarWidth,
+    agentMin: AGENT_PANEL_MIN_WIDTH,
+    projectWidth: projectSidebarWidth,
+    projectMin: PROJECT_SIDEBAR_MIN_WIDTH,
+    projectHidden: projectSidebarCollapsed
+  });
 
   // Deep link into Settings from anywhere in the tree. Settings' open state is
   // local to App, so a nested control (e.g. "set it now" beside a disabled Talk
@@ -410,12 +422,12 @@ export function App() {
         padding: 16,
         gap: 0
       }}>
-        <ProjectSidebar />
+        <ProjectSidebar width={panelWidths.project} />
         {!projectSidebarCollapsed && (
           <SidebarSplitter
-            width={projectSidebarWidth}
+            width={panelWidths.project}
             onChange={setProjectSidebarWidth}
-            viewportWidth={vpWidth - sidebarWidth}
+            viewportWidth={vpWidth - AGENT_PANEL_MIN_WIDTH}
             panelSide="left"
             min={PROJECT_SIDEBAR_MIN_WIDTH}
             max={PROJECT_SIDEBAR_MAX_WIDTH}
@@ -451,13 +463,14 @@ export function App() {
         </div>
 
         <SidebarSplitter
-          width={sidebarWidth}
+          width={panelWidths.agent}
           onChange={setSidebarWidth}
-          viewportWidth={vpWidth - (projectSidebarCollapsed ? 0 : projectSidebarWidth)}
+          viewportWidth={vpWidth - panelWidths.project}
+          min={AGENT_PANEL_MIN_WIDTH}
         />
 
         <div style={{
-          width: sidebarWidth, flexShrink: 0,
+          width: panelWidths.agent, flexShrink: 0,
           minHeight: 0, display: 'flex', flexDirection: 'column'
         }}>
           {agent ? (

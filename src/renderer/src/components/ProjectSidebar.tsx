@@ -13,9 +13,10 @@ import { ProjectRow } from '@/components/ProjectRow';
 /**
  * Left project menu (ADR 0001, Phase 2): the CEO, the tech leads (global
  * agents) and one row per workspace project. Hidden, it leaves a single icon
- * that reopens it.
+ * that reopens it. `width` is the width to draw, already fitted to the window
+ * by App (see `fitPanelWidths`), not the stored preference.
  */
-export function ProjectSidebar() {
+export function ProjectSidebar({ width }: { width: number }) {
   const collapsed = useProjects((s) => s.collapsed);
   const setCollapsed = useProjects((s) => s.setCollapsed);
   const { t } = useTranslation();
@@ -29,14 +30,13 @@ export function ProjectSidebar() {
       </div>
     );
   }
-  return <ExpandedSidebar onHide={() => setCollapsed(true)} />;
+  return <ExpandedSidebar width={width} onHide={() => setCollapsed(true)} />;
 }
 
-function ExpandedSidebar({ onHide }: { onHide: () => void }) {
+function ExpandedSidebar({ width, onHide }: { width: number; onHide: () => void }) {
   const { t } = useTranslation();
   const rtl = useRtl();
   const textDir = rtl ? 'auto' : undefined;
-  const width = useProjects((s) => s.width);
   const snapshot = useProjects((s) => s.snapshot);
   const loaded = useProjects((s) => s.loaded);
   const actionError = useProjects((s) => s.actionError);

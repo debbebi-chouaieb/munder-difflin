@@ -92,6 +92,93 @@ test('two sidebars can never squeeze the floor below its minimum', () => {
   );
 });
 
+test('fitted widths: untouched when the floor has room', () => {
+  const { fitPanelWidths } = loadTs('src/renderer/src/components/splitterRules.ts');
+  const base = { agentMin: 320, projectMin: 200 };
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 1600, agentWidth: 600, projectWidth: 260, projectHidden: false }),
+    { agent: 600, project: 260 }
+  );
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 1600, agentWidth: 600, projectWidth: 260, projectHidden: true }),
+    { agent: 600, project: 0 },
+    'a hidden project panel takes no width'
+  );
+});
+
+test('fitted widths: the agent panel gives way first, then the project panel', () => {
+  const { fitPanelWidths, MIN_FLOOR_WIDTH } = loadTs('src/renderer/src/components/splitterRules.ts');
+  const base = { agentMin: 320, projectMin: 200, projectHidden: false };
+  // Project panel reopened next to a 920 px agent panel in a 1280 px window.
+  const reopened = fitPanelWidths({ ...base, viewportWidth: 1280, agentWidth: 920, projectWidth: 260 });
+  assert.deepEqual(reopened, { agent: 660, project: 260 });
+  assert.equal(1280 - reopened.agent - reopened.project, MIN_FLOOR_WIDTH);
+  // Window shrunk past the agent minimum: the project panel shrinks next.
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 960, agentWidth: 920, projectWidth: 400 }),
+    { agent: 320, project: 280 }
+  );
+  // Too narrow for both minimums: both stop there, the floor takes the loss.
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 700, agentWidth: 920, projectWidth: 400 }),
+    { agent: 320, project: 200 }
+  );
+});
+
+test('fitted widths: boundaries and a hidden project panel under overflow', () => {
+  const { fitPanelWidths } = loadTs('src/renderer/src/components/splitterRules.ts');
+  const base = { agentMin: 320, projectMin: 200 };
+  // Overflow exactly 0: 600 + 260 + 360 = 1220.
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 1220, agentWidth: 600, projectWidth: 260, projectHidden: false }),
+    { agent: 600, project: 260 }
+  );
+  // Overflow exactly what the agent panel can give (600 - 320 = 280): the project panel keeps its width.
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 940, agentWidth: 600, projectWidth: 260, projectHidden: false }),
+    { agent: 320, project: 260 }
+  );
+  // Hidden project panel, window too narrow even for the agent minimum.
+  assert.deepEqual(
+    fitPanelWidths({ ...base, viewportWidth: 600, agentWidth: 600, projectWidth: 260, projectHidden: true }),
+    { agent: 320, project: 0 }
+  );
+});
+
+test('the project panel grows back after a shrink while the agent panel is squeezed', () => {
+  const { fitPanelWidths, nextPanelWidth, AGENT_PANEL_MIN_WIDTH } = loadTs('src/renderer/src/components/splitterRules.ts');
+  const viewportWidth = 1400;
+  const stored = { agentWidth: 920, projectWidth: 400 };
+  const fit = () => fitPanelWidths({
+    viewportWidth, ...stored, agentMin: AGENT_PANEL_MIN_WIDTH, projectMin: 200, projectHidden: false
+  });
+  // Same budget App gives the project splitter.
+  const drag = (startWidth, dragPx) => nextPanelWidth({
+    startWidth, dragPx, sign: 1, min: 200, max: 400, availableWidth: viewportWidth - AGENT_PANEL_MIN_WIDTH
+  });
+  assert.deepEqual(fit(), { agent: 640, project: 400 });
+  stored.projectWidth = drag(fit().project, -100);
+  assert.deepEqual(fit(), { agent: 740, project: 300 }, 'the agent panel takes the freed space');
+  stored.projectWidth = drag(fit().project, 100);
+  assert.deepEqual(fit(), { agent: 640, project: 400 }, 'no ratchet: the project panel reaches 400 again');
+});
+
+test('fitted widths never grow a panel that is already under its minimum', () => {
+  const { fitPanelWidths } = loadTs('src/renderer/src/components/splitterRules.ts');
+  assert.deepEqual(
+    fitPanelWidths({ viewportWidth: 500, agentWidth: 300, agentMin: 320, projectWidth: 150, projectMin: 200, projectHidden: false }),
+    { agent: 300, project: 150 }
+  );
+});
+
+test('App draws both panels at their fitted widths, not the stored ones', () => {
+  const app = read('src/renderer/src/App.tsx');
+  assert.match(app, /<ProjectSidebar width=\{panelWidths\.project\} \/>/);
+  assert.match(app, /width: panelWidths\.agent, flexShrink: 0/);
+  assert.match(app, /viewportWidth=\{vpWidth - AGENT_PANEL_MIN_WIDTH\}/, 'project splitter budget reserves only the agent minimum');
+  assert.doesNotMatch(app, /width=\{sidebarWidth\}|width=\{projectSidebarWidth\}/);
+});
+
 test('the key editor saves only real, valid changes', () => {
   assert.equal(sidebar.keyDraftAction('mdm', 'MDM'), 'unchanged', 'a CLAUDE.md key is not turned into a user key');
   assert.equal(sidebar.keyDraftAction('  ', null), 'unchanged');
@@ -172,7 +259,7 @@ test('the store: cancel clears the error, failures show it, a failed load stays 
 
 test('App mounts the project sidebar before the office floor', () => {
   const app = read('src/renderer/src/App.tsx');
-  const sidebarAt = app.indexOf('<ProjectSidebar />');
+  const sidebarAt = app.indexOf('<ProjectSidebar ');
   assert.ok(sidebarAt > 0);
   assert.ok(sidebarAt < app.indexOf('<OfficeFloor />'));
   assert.match(app, /useEffect\(\(\) => useProjects\.getState\(\)\.connect\(\), \[\]\)/);
