@@ -63,10 +63,10 @@ test('hidden, the sidebar keeps a single icon that only reopens it', () => {
   assert.match(collapsed, /onClick=\{\(\) => setCollapsed\(false\)\}/);
 });
 
-test('drag direction: the agent panel keeps its rule, the project panel follows the mirror', () => {
+test('drag direction: a panel grows when its handle is dragged into the floor, mirrored in RTL', () => {
   const { dragSign } = loadTs('src/renderer/src/components/splitterRules.ts');
   assert.equal(dragSign('right', false), -1);
-  assert.equal(dragSign('right', true), -1, 'unchanged for the existing agent sidebar');
+  assert.equal(dragSign('right', true), 1, 'in RTL the agent panel is drawn on the left');
   assert.equal(dragSign('left', false), 1);
   assert.equal(dragSign('left', true), -1);
 });

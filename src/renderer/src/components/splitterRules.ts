@@ -6,13 +6,13 @@ export type PanelSide = 'left' | 'right';
 
 /**
  * +1 when dragging right grows the panel, -1 when dragging left grows it.
- * The right-side agent panel keeps its original rule (drag left grows) in every
- * direction; the left-side project panel follows the page mirror, because in a
- * right-to-left layout it is drawn on the right.
+ * A panel grows when its handle is dragged into the floor. `panelSide` is the side in a
+ * left-to-right layout; a right-to-left layout mirrors the row, so both panels
+ * swap sides and their rule flips.
  */
 export function dragSign(panelSide: PanelSide, rtl: boolean): 1 | -1 {
-  if (panelSide === 'right') return -1;
-  return rtl ? -1 : 1;
+  const drawnOnLeft = (panelSide === 'left') !== rtl;
+  return drawnOnLeft ? 1 : -1;
 }
 
 /** Floor space each panel must leave: the floor never shrinks below this. */
