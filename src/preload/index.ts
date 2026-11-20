@@ -6,7 +6,7 @@ import type { IntegrationRecord, IntegrationTemplate } from '../shared/integrati
 export type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 import type { UpdateStatus } from '../shared/updateState';
 import type { ProjectResult, ProjectsSnapshot } from '../shared/project';
-import type { OpenTerminalRequest, RoomDone, RoomResult } from '../shared/roomLead';
+import type { OpenTerminalRequest, OpenTerminalResult, RoomDone, RoomResult } from '../shared/roomLead';
 import type { SessionSummary } from '../shared/sessionList';
 import type { RoomTickets } from '../shared/ticketSources';
 export type { UpdateStatus } from '../shared/updateState';
@@ -654,7 +654,7 @@ const api = {
     ipcRenderer.invoke('room:sessions', projectId),
   roomTickets: (projectId: string): Promise<RoomResult<{ tickets: RoomTickets }>> =>
     ipcRenderer.invoke('room:tickets', projectId),
-  roomOpenTerminal: (projectId: string, request?: OpenTerminalRequest): Promise<RoomResult<{ agentId: string; alreadyRunning: boolean }>> =>
+  roomOpenTerminal: (projectId: string, request?: OpenTerminalRequest): Promise<OpenTerminalResult> =>
     ipcRenderer.invoke('room:openTerminal', projectId, request ?? null),
   roomCloseTerminal: (projectId: string): Promise<RoomDone> =>
     ipcRenderer.invoke('room:closeTerminal', projectId),
@@ -1097,8 +1097,8 @@ const api = {
   /** Request a graceful stop at the next hook boundary (#7C.3). */
   controlHalt: (agentId: string): Promise<AgentControlSnapshot | null> =>
     ipcRenderer.invoke('control:halt', agentId),
-  /** Read an agent's current control snapshot. */
-  controlSnapshot: (agentId: string): Promise<AgentControlSnapshot | null> =>
+  /** Read an agent's current control snapshot; `trustPending`: a room lead sits at Claude's trust prompt (ADR 0005). */
+  controlSnapshot: (agentId: string): Promise<(AgentControlSnapshot & { trustPending: boolean }) | null> =>
     ipcRenderer.invoke('control:snapshot', agentId),
   /** Subscribe to gate/deny events (a tool was blocked); returns unsubscribe fn. */
   onApprovalRequest: (cb: (e: { agentId: string; tool?: string; reason?: string }) => void): (() => void) => {

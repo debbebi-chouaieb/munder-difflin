@@ -100,3 +100,32 @@ We chose **A**, reading ZetaHub from the cache.
 - Follow-up: the open `pty:spawn` trust item stays for the other spawn paths.
 - Follow-up: an in-app Refresh, once a restricted hidden run or a direct client is chosen.
 - Follow-up: "spawn then announce" now exists three times in `index.ts` (voice, worker, room lead); extract it.
+
+## Amendment, 2026-11-20 (Phase 3 review and security audit)
+- `needs-trust` carries `path`, the folder "Trust" would store. The dialog shows it, and a "yes" must send it
+  back as `trustPath` (required with `trust: 'yes'`). When the project now points at another folder, main asks
+  again with the new path and stores nothing, so a rescan between the question and the click cannot bind trust
+  to a folder the person never saw.
+- The open result carries `untrusted`. The panel says when a "Trust" click could not be saved and the lead
+  opened untrusted.
+- The trust prompt gate stays off only where no startup prompt is known to appear: Claude trusts the exact
+  folder (not only a parent) and neither the folder nor any parent has a `.mcp.json`. Everywhere else it
+  holds. The probe uses `lstat` (a planted link to a network share is never followed) and treats anything but
+  "not found" as present. Parents count because the official docs name only the project root while a
+  published proof of concept shows a parent's `.mcp.json` being loaded. Reason: user-filed Claude Code issue reports (2026) say a folder trusted through a
+  parent skips the folder-trust dialog but still shows the `.mcp.json` server approval prompt, whose Enter would
+  approve the servers. The official security docs confirm that new MCP servers need their own approval but do
+  not describe the parent case, so this rests on those reports; revisit when Claude Code documents it. The
+  composer hint names both prompts.
+- Stop on a lead whose process already exited (a "no" at Claude's prompt, `/exit`, a crash) archives its card,
+  so the room is usable again. The panel also disposes the lead's pooled terminal after Stop, so the next open
+  of the same lead id starts with a clean screen.
+- The trust dialog states the full risk: hooks and MCP servers start, auto mode runs commands and edits files
+  without asking, and repo or ticket text can steer it. It says trust is remembered for the folder and, when
+  Claude already trusts the folder, that its hooks run with either choice. Cancel takes focus on open; "Open
+  without trust" is the primary button.
+- The right panel shows the selected room or the selected agent. Selecting an agent closes the room; a new
+  agent (Add Agent, a hive spawn, the room's own lead) leaves it open, so a background spawn never takes the
+  panel away.
+- Follow-ups: no UI revokes `trustedPath` yet; `killLead` archives the card even when the kill failed; lead
+  trust is keyed by agent id, not checked against the spawn cwd.

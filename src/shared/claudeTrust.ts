@@ -5,6 +5,68 @@
 
 /** True when `cwd` or one of its parents has `hasTrustDialogAccepted: true`. */
 export function claudeTrustCovers(claudeConfig: unknown, cwd: string, caseInsensitive: boolean): boolean {
+  return anyTrustedKey(claudeConfig, cwd, caseInsensitive, (base, target) => target === base || target.startsWith(`${base}/`));
+}
+
+/** True when `cwd` itself (not only a parent) has `hasTrustDialogAccepted: true`. */
+export function claudeTrustsExactly(claudeConfig: unknown, cwd: string, caseInsensitive: boolean): boolean {
+  return anyTrustedKey(claudeConfig, cwd, caseInsensitive, (base, target) => target === base);
+}
+
+/**
+ * Whether an untrusted lead may sit at a Claude startup prompt whose Enter means
+ * yes, so automation must not type until a real turn ran (ADR 0005). Only one
+ * case is known to show none: Claude trusts this exact folder and the folder has
+ * no project MCP servers. Trust inherited from a parent still shows the
+ * `.mcp.json` approval prompt (Claude Code issue reports, 2026); an unreadable
+ * `.mcp.json` is passed as present by the caller: fail closed.
+ */
+export function trustPromptExpected(folder: { claudeTrustsExactly: boolean; hasProjectMcp: boolean }): boolean {
+  return !folder.claudeTrustsExactly || folder.hasProjectMcp;
+}
+
+/**
+ * True when `cwd` or any parent folder has a `.mcp.json` entry. Claude Code is
+ * documented to read it from the project root; a published proof of concept
+ * shows it also loads one from a parent, so every ancestor counts (fail closed).
+ * `lstat` is used, never `stat`: a planted link to a network share must not be
+ * followed (Windows would authenticate to it). Anything but "not found" counts
+ * as present: a link, a folder, a permission error.
+ */
+export async function projectMcpConfigNear(
+  cwd: string,
+  lstat: (path: string) => Promise<unknown>,
+  log: (line: string) => void
+): Promise<boolean> {
+  for (const candidate of mcpConfigCandidates(cwd)) {
+    try {
+      await lstat(candidate);
+      return true;
+    } catch (e) {
+      if ((e as { code?: unknown } | null)?.code === 'ENOENT') continue;
+      log(`[room] could not check ${candidate}: ${e instanceof Error ? e.message : String(e)}`);
+      return true;
+    }
+  }
+  return false;
+}
+
+/** `<dir>/.mcp.json` for `cwd` and each parent up to the root, nearest first; same separator as `cwd`. */
+export function mcpConfigCandidates(cwd: string): string[] {
+  const sep = cwd.includes('\\') ? '\\' : '/';
+  const parts = cwd.split(/[\\/]+/);
+  if (parts[parts.length - 1] === '') parts.pop();
+  const out: string[] = [];
+  for (let n = parts.length; n >= 1; n--) out.push(`${parts.slice(0, n).join(sep)}${sep}.mcp.json`);
+  return out;
+}
+
+function anyTrustedKey(
+  claudeConfig: unknown,
+  cwd: string,
+  caseInsensitive: boolean,
+  matches: (base: string, target: string) => boolean
+): boolean {
   if (!claudeConfig || typeof claudeConfig !== 'object') return false;
   const projects = (claudeConfig as { projects?: unknown }).projects;
   if (!projects || typeof projects !== 'object') return false;
@@ -16,7 +78,7 @@ export function claudeTrustCovers(claudeConfig: unknown, cwd: string, caseInsens
   for (const [key, value] of Object.entries(projects as Record<string, unknown>)) {
     if (!value || typeof value !== 'object' || (value as { hasTrustDialogAccepted?: unknown }).hasTrustDialogAccepted !== true) continue;
     const base = norm(key);
-    if (base && (target === base || target.startsWith(`${base}/`))) return true;
+    if (base && matches(base, target)) return true;
   }
   return false;
 }
@@ -45,7 +107,7 @@ export class TrustPromptGate {
     this.waiting.add(agentId);
   }
 
-  /** A hook event or the person typing releases the agent. */
+  /** A hook event proving a turn ran, or the terminal closing, releases the agent. */
   release(agentId: string): void {
     this.waiting.delete(agentId);
   }

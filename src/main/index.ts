@@ -39,7 +39,7 @@ import { SessionLister } from './projectSessions';
 import { readRoomTickets } from './projectTickets';
 import { createRoomHandlers, registerRoomIpc } from './roomIpc';
 import { isLeadAgentId, leadMustRunUntrusted, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
-import { claudeTrustCovers, hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
+import { claudeTrustCovers, claudeTrustsExactly, hookProvesTurn, projectMcpConfigNear, trustPromptExpected, TrustPromptGate } from '../shared/claudeTrust';
 import type { Project } from '../shared/project';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
@@ -3055,8 +3055,11 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   if (provider === 'codex' && opts.hive?.id) {
     await enableCodexRemoteForSpawn(opts, opts.hive.id);
   }
+  // Guard only where Claude may show a startup prompt that Enter answers "yes";
+  // elsewhere queued mail can flow (ADR 0005). Unknown cwd: guard.
+  const guardTrustPrompt = claudeProvider && opts.untrusted === true && (!opts.cwd || await leadMayMeetTrustPrompt(opts.cwd));
   const res = ptyManager.spawn(opts, owner);
-  if (res.ok && claudeProvider && opts.untrusted === true) trustPromptGate.hold(leadId);
+  if (res.ok && guardTrustPrompt) trustPromptGate.hold(leadId);
   if (res.ok) analytics.track('agent_spawned', { provider });
   else analytics.track('agent_spawn_failed', { provider, reason: spawnFailReason(res.error) });
   syncKeepAwake(); // arm the power-save blocker while ≥1 agent PTY is alive (#18)
@@ -4573,27 +4576,46 @@ const leadWindow = (agentId: string): Electron.WebContents | null => {
   const owner = leadOwners.get(agentId);
   return owner && !owner.isDestroyed() ? owner : liveWebContents();
 };
+/** Tells the lead's window to archive its card; the renderer ignores an unknown id. */
+const archiveLeadCard = (agentId: string): void => {
+  const target = leadWindow(agentId);
+  leadOwners.delete(agentId);
+  try { target?.send('hive:agentArchived', { id: agentId }); } catch { /* window torn down */ }
+};
 const announceLead = (id: string, name: string, cwd: string, target: Electron.WebContents | null): void => {
   try {
     if (target && !target.isDestroyed()) target.send('hive:agentSpawned', { id, name, provider: 'claude', cwd, command: 'claude', role: 'lead' });
   } catch { /* window torn down */ }
 };
+/** Parsed ~/.claude.json, or null when it is missing, too big or unreadable (then Claude will ask). */
+async function readClaudeConfig(): Promise<unknown> {
+  const file = join(homedir(), '.claude.json');
+  try {
+    if ((await stat(file)).size > CLAUDE_CONFIG_MAX_BYTES) {
+      console.error('[room] ~/.claude.json too big to check folder trust');
+      return null;
+    }
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error(`[room] could not read ~/.claude.json: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
+/** Claude Code already trusts `cwd` or a parent (~/.claude.json), so it shows no folder-trust dialog there. */
+async function claudeTrustsFolder(cwd: string): Promise<boolean> {
+  return claudeTrustCovers(await readClaudeConfig(), cwd, process.platform === 'win32');
+}
+
+/** Whether an untrusted lead in `cwd` may meet a startup prompt that Enter would answer "yes" (ADR 0005). */
+async function leadMayMeetTrustPrompt(cwd: string): Promise<boolean> {
+  const exact = claudeTrustsExactly(await readClaudeConfig(), cwd, process.platform === 'win32');
+  const hasProjectMcp = await projectMcpConfigNear(cwd, (path) => lstat(path), (line) => console.error(line));
+  return trustPromptExpected({ claudeTrustsExactly: exact, hasProjectMcp });
+}
 registerRoomIpc(createRoomHandlers({
   projects: async () => (await projectService.current()).projects,
-  claudeTrusts: async (cwd) => {
-    const file = join(homedir(), '.claude.json');
-    try {
-      if ((await stat(file)).size > CLAUDE_CONFIG_MAX_BYTES) {
-        console.error('[room] ~/.claude.json too big to check folder trust');
-        return false;
-      }
-      return claudeTrustCovers(JSON.parse(await readFile(file, 'utf8')), cwd, process.platform === 'win32');
-    } catch (e) {
-      // No readable config: Claude will ask, which is what "no" promises.
-      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error(`[room] could not read ~/.claude.json: ${e instanceof Error ? e.message : String(e)}`);
-      return false;
-    }
-  },
+  claudeTrusts: claudeTrustsFolder,
   resolveProjectCwd: async (projectPath) => {
     const root = readConfig().workspaceRoot;
     if (!root) return null;
@@ -4626,11 +4648,10 @@ registerRoomIpc(createRoomHandlers({
   killLead: (agentId) => {
     const res = ptyManager.kill(agentId);
     teardownPty(agentId);
-    const target = leadWindow(agentId);
-    leadOwners.delete(agentId);
-    try { target?.send('hive:agentArchived', { id: agentId }); } catch { /* window torn down */ }
+    archiveLeadCard(agentId);
     return res;
   },
+  archiveLead: (agentId) => archiveLeadCard(agentId),
   log: (line) => console.error(line)
 }));
 

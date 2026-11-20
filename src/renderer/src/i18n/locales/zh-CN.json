@@ -1302,6 +1302,7 @@
     "voice": "语音",
     "busyQueued": "{{name}} 正在忙——{{count}} 条排队中",
     "heldFloor": "暂挂——投递已全楼层暂停",
+    "heldTrust": "暂挂——{{name}} 可能停在 Claude 的启动提示（信任或 MCP 批准）；请在终端中回答，按 Enter 即表示同意",
     "heldDraft": "暂挂——{{name}} 的终端提示行有未发送文本",
     "heldPicker": "暂挂——{{name}} 的终端里有一个斜杠命令选择器开着",
     "heldExited": "暂挂——{{name}} 的终端已退出",
@@ -1451,5 +1452,78 @@
     "floorClassic": "经典",
     "floorTitle": "在项目房间楼层和经典办公室楼层之间切换。代理会继续运行。",
     "themeWhileRooms": "项目房间楼层已开启。请在项目菜单中切换到经典楼层后再选择主题。"
+  },
+  "room": {
+    "loading": "加载中…",
+    "gone": "此项目已不在楼层上。",
+    "close": "关闭房间",
+    "errors": {
+      "unknown-project": "此项目已不在楼层上。",
+      "invalid-request": "请求无效。",
+      "unknown-session": "该会话不在此项目的最近列表中。",
+      "large-session": "该会话较大。",
+      "needs-trust": "需要先信任此项目。",
+      "project-moved": "项目文件夹已移动，或已不是普通文件夹。",
+      "session-not-found": "无法恢复该会话。",
+      "spawn-failed": "无法启动负责人终端。",
+      "stop-failed": "无法停止负责人终端。",
+      "read-failed": "无法读取此项目的数据。",
+      "busy": "上一个请求仍在处理中，请稍后再试。"
+    },
+    "trust": {
+      "title": "信任此项目？",
+      "body": "你正在此文件夹中打开 {{name}} 的负责人终端：",
+      "risk": "信任后，Claude 会启动此文件夹的 hooks 和 MCP 服务器，并以自动模式运行：不经询问即执行命令和修改文件。此仓库或其工单中的文字可以影响它的行为。只信任你了解的代码。",
+      "remembered": "对此文件夹的信任会被记住。",
+      "untrusted": "不信任打开会以普通模式启动 Claude。Claude 会先在终端中询问是否信任此文件夹。",
+      "untrustedButClaudeTrusts": "不信任打开会以普通模式启动 Claude，不启用自动模式。",
+      "claudeTrustsWarning": "Claude Code 已信任此文件夹，因此无论你选择哪一项，负责人一启动，它的 hooks 就会运行。它的 MCP 服务器仍可能在终端中请求批准。",
+      "cancel": "取消",
+      "openUntrusted": "不信任打开",
+      "trust": "信任",
+      "notSaved": "无法保存信任，负责人已以不信任方式打开。Claude 可能会在终端中询问。"
+    },
+    "large": {
+      "title": "大型会话",
+      "body": "此会话已占用约 {{size}} 个上下文 token。恢复它既慢又贵。要改为开始新会话吗？",
+      "bodyUnknown": "此会话较大，且上下文大小未知。恢复它可能既慢又贵。要改为开始新会话吗？",
+      "cancel": "取消",
+      "resume": "仍然恢复",
+      "newSession": "新会话"
+    },
+    "sessions": {
+      "title": "会话",
+      "new": "新会话",
+      "empty": "暂无会话。",
+      "untitled": "（无标题）",
+      "large": "较大",
+      "leadRunning": "负责人正在运行。停止后才能打开其他会话。"
+    },
+    "tickets": {
+      "zetahub": "ZETAHUB",
+      "local": "暂无工单",
+      "syncedAt": "缓存时间：{{time}}",
+      "none": "没有未完成项。",
+      "key": "编号",
+      "titleCol": "标题",
+      "status": "状态",
+      "more": "另有 {{count}} 项未显示。",
+      "refreshHint": "运行 /zetahub-sync 刷新。",
+      "zetahubReason": {
+        "no-key": "此项目未设置 ZetaHub 项目编号。",
+        "no-cache": "尚无 ZetaHub 缓存。请运行 /zetahub-sync。",
+        "not-cached": "此项目不在 ZetaHub 缓存中。请运行 /zetahub-sync。",
+        "unreadable": "无法读取 ZetaHub 缓存。"
+      },
+      "localReason": {
+        "no-line": "此项目的 CLAUDE.md 中没有 \"Local open work:\" 行。",
+        "unavailable": "本地工作文件不存在或位于项目之外。",
+        "unreadable": "无法读取本地工作文件。"
+      }
+    },
+    "terminal": {
+      "starting": "正在启动负责人…",
+      "stop": "停止负责人"
+    }
   }
 }

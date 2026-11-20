@@ -13,27 +13,38 @@ const LEAD_PREFIX = 'lead--';
 const LEAD_ID = /^lead--[a-z0-9][a-z0-9-]{0,80}$/;
 
 /** Fixed codes so the renderer can translate them; details stay in the main log. */
-export type RoomErrorCode =
-  | 'unknown-project'
-  | 'invalid-request'
-  | 'unknown-session'
-  | 'large-session'
-  | 'needs-trust'
-  | 'project-moved'
-  | 'session-not-found'
-  | 'spawn-failed'
-  | 'stop-failed'
-  | 'read-failed'
-  | 'busy';
+export const ROOM_ERROR_CODES = [
+  'unknown-project',
+  'invalid-request',
+  'unknown-session',
+  'large-session',
+  'needs-trust',
+  'project-moved',
+  'session-not-found',
+  'spawn-failed',
+  'stop-failed',
+  'read-failed',
+  'busy'
+] as const;
+export type RoomErrorCode = (typeof ROOM_ERROR_CODES)[number];
 
 export type RoomFailure =
   | { ok: false; error: Exclude<RoomErrorCode, 'large-session' | 'needs-trust'> }
   | { ok: false; error: 'large-session'; contextTokens: number | null }
-  /** `claudeTrusts`: Claude already trusts this folder or a parent, so opening without trust will not ask. */
-  | { ok: false; error: 'needs-trust'; claudeTrusts: boolean };
+  /**
+   * `path`: the folder "Trust" would store; the dialog shows it and a "yes" sends it
+   * back. `claudeTrusts`: Claude already trusts this folder or a parent, so opening
+   * without trust will not ask and the folder's hooks and MCP servers still run.
+   */
+  | { ok: false; error: 'needs-trust'; path: string; claudeTrusts: boolean };
 
 export type RoomResult<T> = ({ ok: true } & T) | RoomFailure;
 export type RoomDone = RoomResult<{ done: true }>;
+/** `untrusted`: the lead runs without folder-trust pre-accept and auto mode, also after a "yes" that could not be saved. */
+export type OpenTerminalResult = RoomResult<{ agentId: string; alreadyRunning: boolean; untrusted: boolean }>;
+
+/** Longest folder path a trust answer may carry. */
+const MAX_TRUST_PATH = 4096;
 
 export interface OpenTerminalRequest {
   /** Null or absent starts a new session. */
@@ -46,12 +57,15 @@ export interface OpenTerminalRequest {
    * Claude's folder trust and without auto mode, so Claude asks in the terminal.
    */
   trust?: 'yes' | 'no';
+  /** With trust 'yes': the `path` from `needs-trust`, the folder the person saw. Required then. */
+  trustPath?: string;
 }
 
 export interface OpenRequest {
   sessionId: string | null;
   confirmLarge: boolean;
   trust: 'yes' | 'no' | null;
+  trustPath: string | null;
 }
 
 /** Same terminal size as other agents get before the first fit. */
@@ -153,15 +167,18 @@ export function buildLeadSpawn(project: LeadProject, cwd: string, sessionId: str
 
 /** Parses the renderer's request; null when any field is malformed. */
 export function parseOpenRequest(request: unknown): OpenRequest | null {
-  if (request === undefined || request === null) return { sessionId: null, confirmLarge: false, trust: null };
+  if (request === undefined || request === null) return { sessionId: null, confirmLarge: false, trust: null, trustPath: null };
   if (typeof request !== 'object' || Array.isArray(request)) return null;
-  const { sessionId, confirmLarge, trust } = request as OpenTerminalRequest;
+  const { sessionId, confirmLarge, trust, trustPath } = request as OpenTerminalRequest;
   if (sessionId !== undefined && sessionId !== null && !isValidSessionId(sessionId)) return null;
   if (confirmLarge !== undefined && typeof confirmLarge !== 'boolean') return null;
   if (trust !== undefined && trust !== 'yes' && trust !== 'no') return null;
-  return { sessionId: sessionId ?? null, confirmLarge: confirmLarge === true, trust: trust ?? null };
+  if (trustPath !== undefined && (typeof trustPath !== 'string' || trustPath.length === 0 || trustPath.length > MAX_TRUST_PATH)) return null;
+  // A "yes" binds to the folder the person was shown; without it there is nothing to bind.
+  if (trust === 'yes' && trustPath === undefined) return null;
+  return { sessionId: sessionId ?? null, confirmLarge: confirmLarge === true, trust: trust ?? null, trustPath: trustPath ?? null };
 }
 
 export function sameOpenRequest(a: OpenRequest, b: OpenRequest): boolean {
-  return a.sessionId === b.sessionId && a.confirmLarge === b.confirmLarge && a.trust === b.trust;
+  return a.sessionId === b.sessionId && a.confirmLarge === b.confirmLarge && a.trust === b.trust && a.trustPath === b.trustPath;
 }

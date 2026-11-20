@@ -171,10 +171,14 @@ export function MessageQueueComposer({ agent }: MessageQueueComposerProps) {
   // Floor-wide auto-delivery pause (Command Center switch) also holds the queue.
   // Without saying so — and without the per-row "send now" override — messages
   // look permanently stuck with no explanation and no escape hatch.
-  const deliveryPaused = useDeliveryPaused(agent.id, queue.length > 0);
+  // A room lead at Claude's trust prompt holds everything, even "send now":
+  // Enter there answers "yes" (ADR 0005).
+  const { paused: deliveryPaused, trustPending } = useControlHolds(agent.id, queue.length > 0);
 
   const statusHint = queue.length === 0
     ? null
+    : trustPending
+    ? t('queueComposer.heldTrust', { name: agent.name })
     : block === 'draft'
     ? t('queueComposer.heldDraft', { name: agent.name })
     : block === 'picker'
@@ -414,24 +418,33 @@ function useTerminalBlock(ptyId: string | undefined, active: boolean): TerminalA
   return block === 'settling' ? null : block;
 }
 
-/** Poll the floor-wide auto-delivery pause (main-process control state) while
- * this agent has messages waiting. 2s is plenty — the pause flips on human
- * timescales, and the drain re-reads the live snapshot before every send. */
-function useDeliveryPaused(agentId: string, active: boolean): boolean {
-  const [paused, setPaused] = useState(false);
+interface ControlHolds { paused: boolean; trustPending: boolean }
+const NO_HOLDS: ControlHolds = { paused: false, trustPending: false };
+
+/** Poll the main-process holds on delivery (the floor-wide auto-delivery pause,
+ * and a room lead at Claude's trust prompt) while this agent has messages
+ * waiting. Only for the hint: the drain re-reads the live snapshot before every
+ * send. 2s is plenty, both flip on human timescales. */
+function useControlHolds(agentId: string, active: boolean): ControlHolds {
+  const [holds, setHolds] = useState<ControlHolds>(NO_HOLDS);
   useEffect(() => {
-    if (!active) { setPaused(false); return; }
+    if (!active) { setHolds(NO_HOLDS); return; }
     let alive = true;
     const read = () => {
       window.cth.controlSnapshot(agentId)
-        .then((s) => { if (alive) setPaused(!!s?.autoDeliveryPaused); })
-        .catch(() => { /* main not ready — assume not paused */ });
+        .then((s) => {
+          if (!alive) return;
+          const paused = !!s?.autoDeliveryPaused;
+          const trustPending = !!s?.trustPending;
+          setHolds((prev) => (prev.paused === paused && prev.trustPending === trustPending ? prev : { paused, trustPending }));
+        })
+        .catch(() => { /* main not ready — assume not held */ });
     };
     read();
     const iv = setInterval(read, 2000);
     return () => { alive = false; clearInterval(iv); };
   }, [agentId, active]);
-  return paused;
+  return holds;
 }
 
 /**

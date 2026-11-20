@@ -204,6 +204,7 @@ test('no Arabic string is left as its English source', () => {
   // would make the UI wrong, not more Arabic.
   const SAME_ON_PURPOSE = new Set([
     'settings.connections.slack',            // product name
+    'room.tickets.zetahub',                  // "ZETAHUB": product name, as a table heading
     'onboarding.providerBlurb.claude',       // "Claude Code — Anthropic": two product names
     'onboarding.providerBlurb.codex',
     'onboarding.providerBlurb.antigravity',

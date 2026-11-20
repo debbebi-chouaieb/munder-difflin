@@ -7,17 +7,20 @@ Update this file whenever a work item starts, finishes, or a new gap appears.
 munder-difflin has no ZetaHub project, so its work is tracked here as local tickets. The `backlog` skill reads
 only this section. One bullet per item: what, then (source, date). Remove a bullet when it is done.
 
-- Rooms-b: main readers and IPC with tests: `room:sessions`, `room:tickets`, `room:openTerminal`, `room:closeTerminal` (project id only), per-project trust (ADR 0005, 2026-11-20)
-- Rooms-c: room click, RoomPanel (sessions, lazy lead terminal, ZetaHub and local tables), two count boards per room, en/ar/zh-CN (ADR 0005, ADR 0003 amended, 2026-11-20)
 - Rooms-d: PTY performance: `pty:data` coalescing for all PTYs, room scrollback 10 000, room terminal cap, idle shutdown, config `roomPtyCap`/`roomIdleMinutes` (ADR 0005, 2026-11-20)
 - Rooms-e: reviewer and security-auditor on `room:*` IPC, lead spawn and the `~/.claude` reads; test-runner against the known failing list (ADR 0005, 2026-11-20)
 - Rooms trust follow-ups: bind `trustedPath` to the git root commit so a re-clone at the same path asks again; extract the three "spawn then announce" copies in index.ts; re-check the lead cwd right before ptyManager.spawn (security audit, 2026-11-20)
+- Rooms trust revoke: no UI or IPC clears `trustedPath` yet (the patch accepts null); add "Forget trust" to the room panel (Phase 3 review, 2026-11-20)
+- Rooms main hardening: `killLead` archives the card and tears down even when `ptyManager.kill` failed (archive only on ok); `leadMustRunUntrusted` keys trust by agent id, so a `pty:spawn` replay of a trusted lead id with another cwd runs trusted (compare cwd with the project path; careful with junctioned roots) (Phase 3 review, 2026-11-20)
+- Rooms small: the room panel and the board-count hook both read tickets on window focus (one extra read); `leadOwners` keeps the entry of a lead that exits and is never stopped; a late hook from a killed lead could release the gate of its next spawn (Phase 3 review, 2026-11-20)
 - Rooms refresh (deferred): in-app ZetaHub refresh. `runHiddenClaude` uses bypassPermissions while a sync reads user-written ticket text; needs a restricted tool list or a direct client first (pm review, 2026-11-20)
 - Phase 4: parallel work enforced in main; adds `projectId`/`scope` on agents. The lead conversation part moved to Rooms-b/c (ADR 0004, 2026-11-20)
 - Phase 4 also: project picker in AddAgentModal (projects list + global option); explicit projectId so agents in worktrees count in their room (deferred from Phase 2, 2026-11-19)
-- Phase 6: Android devices from `adb devices` in the office and on tasks (ADR 0006 to write at the phase brief; 0005 went to the room panel, 2026-11-20)
+- Phase 6: Android devices from `adb devices` in the office and on tasks (ADR 0007 to write at the phase brief; 0005 and 0006 went to the room panel, 2026-11-20)
 - Privacy: upstream click-through links in Settings and the update toast still point at the upstream project. Migration of profiles that already saved `true` skipped by decision (review, 2026-11-19)
 - 7 focused tests fail on upstream HEAD too (agent-token-cap, arabic-terminal, hire-import, model-catalog-remote, provider-config, release-notes, telemetry-message-count); 16 more fail on this Windows machine for symlink EPERM and socket EACCES (2026-11-19)
+- Source-regex tests that hard-code a bare LF (e.g. telemetry-message-count steer and composer) pass or fail with the checkout's line endings (core.autocrlf=true gives CRLF); match an optional CR before each LF, or add a `.gitattributes` eol rule (2026-11-20)
+- quit-sweep.electron.test.cjs failed once in a full run under heavy machine load and passed 3 of 3 alone; watch for flakiness (2026-11-20)
 - Agent sidebar width limits (320/1200, reset 420) are repeated in store.ts, SidebarSplitter defaults and splitterRules; move them next to the project sidebar constants. Floor budget uses window width, not the real row (padding and handles) (review, 2026-11-20)
 - Michael boot sends /remote-control, which fails with "Session creation failed (server 400)"; upstream behavior, not investigated (2026-11-19)
 - Projects floor camera: zoom/pan bounds for large floors, counter-scaled room labels, center a room when its project is clicked in the sidebar (deferred from Phase 3, ADR 0002, 2026-11-19)

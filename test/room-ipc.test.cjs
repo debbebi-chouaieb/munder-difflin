@@ -11,7 +11,7 @@ const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
 
 const { buildLeadSpawn, leadAgentIdFor, parseOpenRequest, spawnPosture, leadMustRunUntrusted, isLeadAgentId, withoutClaudeBypassArgs } = loadTs('src/shared/roomLead.ts');
-const { claudeTrustCovers, TrustPromptGate, hookProvesTurn } = loadTs('src/shared/claudeTrust.ts');
+const { claudeTrustCovers, claudeTrustsExactly, trustPromptExpected, projectMcpConfigNear, mcpConfigCandidates, TrustPromptGate, hookProvesTurn } = loadTs('src/shared/claudeTrust.ts');
 const { createRoomHandlers } = loadTs('src/main/roomIpc.ts');
 
 const ABC = '00000000-0000-4000-8000-000000000abc';
@@ -23,7 +23,7 @@ const PROJECT = {
 };
 
 function deps(over = {}) {
-  const calls = { spawn: [], patch: [], kill: [], announce: [], log: [] };
+  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [] };
   const running = new Set(over.running ?? []);
   const sessions = {
     [ABC]: { id: ABC, large: false, contextTokens: 10 },
@@ -41,6 +41,7 @@ function deps(over = {}) {
     announceLead: (...args) => calls.announce.push(args),
     patchProject: (id, patch) => { calls.patch.push([id, patch]); return over.patchOk ?? true; },
     killLead: (id) => { calls.kill.push(id); if (over.killFails) return { ok: false, error: 'EPERM' }; running.delete(id); return { ok: true }; },
+    archiveLead: (id) => { calls.archive.push(id); },
     log: (m) => calls.log.push(m)
   };
   return { d, calls };
@@ -114,6 +115,50 @@ test('claude trust: the folder or a parent, either slash, case-insensitive on Wi
   assert.equal(claudeTrustCovers({ projects: { '': { hasTrustDialogAccepted: true } } }, 'D:/ws', true), false);
 });
 
+test('claude trust, exact: only the folder itself counts, not a trusted parent', () => {
+  const cfg = { projects: { 'D:/ws': { hasTrustDialogAccepted: true }, 'D:/ws/App': { hasTrustDialogAccepted: true } } };
+  assert.equal(claudeTrustsExactly(cfg, 'D:\\ws\\App\\', true), true);
+  assert.equal(claudeTrustsExactly(cfg, 'D:\\ws\\Web', true), false, 'trusted only through D:/ws');
+  assert.equal(claudeTrustsExactly(null, 'D:/ws', true), false);
+});
+
+test('trust prompt gate: armed unless Claude trusts the exact folder and it has no project MCP servers', () => {
+  // Parent trust skips the folder dialog but still shows the .mcp.json approval prompt.
+  assert.equal(trustPromptExpected({ claudeTrustsExactly: false, hasProjectMcp: false }), true);
+  assert.equal(trustPromptExpected({ claudeTrustsExactly: true, hasProjectMcp: true }), true);
+  assert.equal(trustPromptExpected({ claudeTrustsExactly: false, hasProjectMcp: true }), true);
+  assert.equal(trustPromptExpected({ claudeTrustsExactly: true, hasProjectMcp: false }), false);
+});
+
+test('mcp probe: the folder and every parent, nearest first, either separator', () => {
+  assert.deepEqual(mcpConfigCandidates('D:\\ws\\App'), ['D:\\ws\\App\\.mcp.json', 'D:\\ws\\.mcp.json', 'D:\\.mcp.json']);
+  assert.deepEqual(mcpConfigCandidates('/home/u/App/'), ['/home/u/App/.mcp.json', '/home/u/.mcp.json', '/home/.mcp.json', '/.mcp.json']);
+});
+
+test('mcp probe: only "not found" everywhere means none; a parent file, a link or an error counts (fail closed)', async () => {
+  const enoent = () => Object.assign(new Error('nope'), { code: 'ENOENT' });
+  const probe = (answers) => {
+    const asked = [];
+    const logs = [];
+    const lstat = async (p) => { asked.push(p); const a = answers[p]; if (a) throw a(); return {}; };
+    return { asked, logs, run: () => projectMcpConfigNear('D:\\ws\\App', lstat, (l) => logs.push(l)) };
+  };
+  const none = { 'D:\\ws\\App\\.mcp.json': enoent, 'D:\\ws\\.mcp.json': enoent, 'D:\\.mcp.json': enoent };
+  const a = probe(none);
+  assert.equal(await a.run(), false);
+  assert.equal(a.asked.length, 3);
+
+  const parent = probe({ 'D:\\ws\\App\\.mcp.json': enoent });
+  assert.equal(await parent.run(), true, 'a workspace-level .mcp.json counts');
+  assert.deepEqual(parent.asked, ['D:\\ws\\App\\.mcp.json', 'D:\\ws\\.mcp.json'], 'stops at the first hit');
+
+  for (const code of ['EACCES', 'ENOTDIR', 'EPERM']) {
+    const err = probe({ ...none, 'D:\\ws\\App\\.mcp.json': () => Object.assign(new Error(code), { code }) });
+    assert.equal(await err.run(), true, code);
+    assert.equal(err.logs.length, 1);
+  }
+});
+
 test('trust prompt gate: held until released', () => {
   const gate = new TrustPromptGate();
   assert.equal(gate.blocks('lead--app'), false);
@@ -124,9 +169,15 @@ test('trust prompt gate: held until released', () => {
 });
 
 test('open request parsing', () => {
-  assert.deepEqual(parseOpenRequest(null), { sessionId: null, confirmLarge: false, trust: null });
-  assert.deepEqual(parseOpenRequest({ sessionId: ABC, trust: 'no' }), { sessionId: ABC, confirmLarge: false, trust: 'no' });
-  for (const bad of ['abc', [], { sessionId: '../x' }, { confirmLarge: 'yes' }, { trust: 'maybe' }]) {
+  assert.deepEqual(parseOpenRequest(null), { sessionId: null, confirmLarge: false, trust: null, trustPath: null });
+  assert.deepEqual(parseOpenRequest({ sessionId: ABC, trust: 'no' }), { sessionId: ABC, confirmLarge: false, trust: 'no', trustPath: null });
+  assert.deepEqual(parseOpenRequest({ trust: 'yes', trustPath: 'D:/ws/App' }), { sessionId: null, confirmLarge: false, trust: 'yes', trustPath: 'D:/ws/App' });
+  const bads = [
+    'abc', [], { sessionId: '../x' }, { confirmLarge: 'yes' }, { trust: 'maybe' },
+    // A "yes" must name the folder the person was shown.
+    { trust: 'yes' }, { trust: 'yes', trustPath: '' }, { trust: 'yes', trustPath: 7 }, { trust: 'yes', trustPath: 'x'.repeat(4097) }
+  ];
+  for (const bad of bads) {
     assert.equal(parseOpenRequest(bad), null);
   }
 });
@@ -151,7 +202,7 @@ test('tickets: returns the reader result', async () => {
 test('open: a new session spawns once in the real folder and stores the lead id', async () => {
   const { d, calls } = deps();
   const res = await createRoomHandlers(d).openTerminal('app', null, null);
-  assert.deepEqual(res, { ok: true, agentId: 'lead--app', alreadyRunning: false });
+  assert.deepEqual(res, { ok: true, agentId: 'lead--app', alreadyRunning: false, untrusted: false });
   assert.equal(calls.spawn.length, 1);
   assert.equal(calls.spawn[0].cwd, 'D:/ws/App-real');
   assert.equal(calls.spawn[0].untrusted, false);
@@ -160,37 +211,49 @@ test('open: a new session spawns once in the real folder and stores the lead id'
 
 test('trust: an untrusted project asks first, and says when Claude already trusts the folder', async () => {
   const { d, calls } = deps({ project: { trusted: false } });
-  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', null, null), { ok: false, error: 'needs-trust', claudeTrusts: false });
+  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', null, null), { ok: false, error: 'needs-trust', path: 'D:/ws/App', claudeTrusts: false });
   const parent = deps({ project: { trusted: false }, claudeTrusts: true });
-  assert.deepEqual(await createRoomHandlers(parent.d).openTerminal('app', null, null), { ok: false, error: 'needs-trust', claudeTrusts: true });
+  assert.deepEqual(await createRoomHandlers(parent.d).openTerminal('app', null, null), { ok: false, error: 'needs-trust', path: 'D:/ws/App', claudeTrusts: true });
   assert.equal(calls.spawn.length, 0);
 });
 
 test('trust: "yes" stores the folder path and spawns trusted', async () => {
   const { d, calls } = deps({ project: { trusted: false } });
-  await createRoomHandlers(d).openTerminal('app', { trust: 'yes' }, null);
+  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null);
   assert.deepEqual(calls.patch[0], ['app', { trustedPath: 'D:/ws/App' }]);
   assert.equal(calls.spawn[0].untrusted, false);
+  assert.equal(res.untrusted, false);
+});
+
+test('trust: a "yes" for a folder the project no longer points at asks again and stores nothing', async () => {
+  const { d, calls } = deps({ project: { trusted: false } });
+  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/Old' }, null);
+  assert.deepEqual(res, { ok: false, error: 'needs-trust', path: 'D:/ws/App', claudeTrusts: false });
+  assert.deepEqual(calls.patch, []);
+  assert.equal(calls.spawn.length, 0);
+  assert.ok(calls.log.some((m) => m.includes('named another folder')));
 });
 
 test('trust: "yes" is not stored when the open is refused', async () => {
   const { d, calls } = deps({ project: { trusted: false } });
-  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', sessionId: '00000000-0000-4000-8000-00000000ffff' }, null);
+  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App', sessionId: '00000000-0000-4000-8000-00000000ffff' }, null);
   assert.equal(res.error, 'unknown-session');
   assert.deepEqual(calls.patch, []);
 });
 
 test('trust: "no" spawns untrusted once and stores nothing about trust', async () => {
   const { d, calls } = deps({ project: { trusted: false } });
-  await createRoomHandlers(d).openTerminal('app', { trust: 'no' }, null);
+  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'no' }, null);
   assert.equal(calls.spawn[0].untrusted, true);
+  assert.equal(res.untrusted, true);
   assert.ok(calls.patch.every(([, p]) => !('trustedPath' in p)));
 });
 
 test('trust: a failed save opens untrusted, as main will, and is logged', async () => {
   const { d, calls } = deps({ project: { trusted: false }, patchOk: false });
-  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes' }, null);
+  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null);
   assert.equal(res.ok, true);
+  assert.equal(res.untrusted, true, 'the panel is told the "yes" did not stick');
   assert.equal(calls.spawn[0].untrusted, true);
   assert.ok(calls.log.some((m) => m.includes('opening untrusted')));
 });
@@ -198,7 +261,7 @@ test('trust: a failed save opens untrusted, as main will, and is logged', async 
 test('open: a running lead is re-announced, not spawned again', async () => {
   const { d, calls } = deps({ running: ['lead--app'] });
   const res = await createRoomHandlers(d).openTerminal('app', { sessionId: ABC }, null);
-  assert.deepEqual(res, { ok: true, agentId: 'lead--app', alreadyRunning: true });
+  assert.deepEqual(res, { ok: true, agentId: 'lead--app', alreadyRunning: true, untrusted: false });
   assert.equal(calls.spawn.length, 0);
   assert.equal(calls.announce.length, 1);
 });
@@ -278,9 +341,17 @@ test('close: kills a running lead, no-op otherwise, works after the project is d
   const h = createRoomHandlers(d);
   assert.deepEqual(await h.closeTerminal('app'), { ok: true, done: true });
   assert.deepEqual(calls.kill, ['lead--app']);
+  assert.deepEqual(calls.archive, [], 'killLead archives itself; no second archive');
   assert.deepEqual(await h.closeTerminal('app'), { ok: true, done: true });
   assert.deepEqual(calls.kill, ['lead--app']);
   assert.deepEqual(await h.closeTerminal('nope'), { ok: false, error: 'unknown-project' });
+});
+
+test('close: a lead that exited on its own still has its card archived, so the room is usable again', async () => {
+  const { d, calls } = deps({ running: [] });
+  assert.deepEqual(await createRoomHandlers(d).closeTerminal('app'), { ok: true, done: true });
+  assert.deepEqual(calls.kill, [], 'nothing to kill');
+  assert.deepEqual(calls.archive, ['lead--app']);
 });
 
 test('close: during a slow open it waits, then stops the new process', async () => {
@@ -329,7 +400,11 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /if \(claudeProvider && spawnPosture\(opts\.untrusted === true, false\)\.preAcceptTrust\) \{\s*try \{ ensureClaudePermissionsAccepted/);
   assert.match(src, /argsWithAutoModeFlag\(opts\.args \?\? \[\], spawnPosture\(opts\.untrusted === true, !!cfg\.autoMode\)\.autoMode, provider\)/);
   // The gate: held after an untrusted spawn, released by a real turn and by teardown, read by both automations.
-  assert.match(src, /if \(res\.ok && claudeProvider && opts\.untrusted === true\) trustPromptGate\.hold\(leadId\);/);
+  // Held only where Claude will show a prompt: not in a folder Claude already trusts.
+  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await leadMayMeetTrustPrompt\(opts\.cwd\)\);\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && guardTrustPrompt\) trustPromptGate\.hold\(leadId\);/);
+  assert.match(src, /return trustPromptExpected\(\{ claudeTrustsExactly: exact, hasProjectMcp \}\);/);
+  // lstat, never stat: a planted .mcp.json link to a share must not be followed.
+  assert.match(src, /projectMcpConfigNear\(cwd, \(path\) => lstat\(path\)/);
   assert.match(src, /if \(agentId && hookProvesTurn\(event\)\) trustPromptGate\.release\(agentId\);/);
   assert.match(src, /trustPromptGate\.release\(agentId \?\? id\);/);
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);

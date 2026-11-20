@@ -11,6 +11,9 @@ import { useDirectionSync } from '@/i18n/useDirection';
 import { useArabicTerminalSync } from '@/terminal/useArabicTerminalSync';
 import { MemoryPanel } from '@/components/MemoryPanel';
 import { AgentDetailPanel } from '@/components/AgentDetailPanel';
+import { RoomPanel } from '@/components/room/RoomPanel';
+import { useRoomPanel } from '@/store/roomPanel';
+import { rightPanelView } from '@/components/room/roomPanelModel';
 import { AgentStrip } from '@/components/AgentStrip';
 import { AddAgentModal } from '@/components/AddAgentModal';
 import { MichaelBooting } from '@/components/MichaelBooting';
@@ -57,6 +60,8 @@ export function App() {
   const projectSidebarWidth = useProjects((s) => s.width);
   const setProjectSidebarWidth = useProjects((s) => s.setWidth);
   const agent = useStore(selectedAgent);
+  const selectedRoomId = useRoomPanel((s) => s.selectedRoomId);
+  const rightView = rightPanelView(selectedRoomId, !!agent);
   const agents = useStore(s => s.agents);
   const agentCount = agents.length;
   const bootingGodName = useResolvedGodName();
@@ -473,7 +478,10 @@ export function App() {
           width: panelWidths.agent, flexShrink: 0,
           minHeight: 0, display: 'flex', flexDirection: 'column'
         }}>
-          {agent ? (
+          {rightView === 'room' && selectedRoomId ? (
+            // One instance per room: a late answer for room A can never land in room B.
+            <RoomPanel key={selectedRoomId} projectId={selectedRoomId} />
+          ) : rightView === 'agent' && agent ? (
             <AgentDetailPanel agent={agent} />
           ) : godStatus === 'booting' ? (
             <PixelPanel variant="default" noPadding style={{

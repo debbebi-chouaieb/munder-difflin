@@ -1302,6 +1302,7 @@
     "voice": "voice",
     "busyQueued": "{{name}} is busy — {{count}} queued",
     "heldFloor": "held — delivery paused floor-wide",
+    "heldTrust": "held — {{name}} may be at a Claude startup prompt (trust or MCP approval); answer it in the terminal, Enter would say yes",
     "heldDraft": "held — {{name}}'s terminal has unsent text on its prompt",
     "heldPicker": "held — a slash-command picker is open in {{name}}'s terminal",
     "heldExited": "held — {{name}}'s terminal has exited",
@@ -1451,5 +1452,78 @@
     "floorClassic": "Classic",
     "floorTitle": "Switch between the project rooms floor and the classic office floor. Agents keep running.",
     "themeWhileRooms": "The project rooms floor is on. Switch to the classic floor in the projects menu to choose a theme."
+  },
+  "room": {
+    "loading": "Loading…",
+    "gone": "This project is no longer on the floor.",
+    "close": "Close room",
+    "errors": {
+      "unknown-project": "This project is not on the floor any more.",
+      "invalid-request": "The request was not valid.",
+      "unknown-session": "That session is not in this project's recent list.",
+      "large-session": "That session is large.",
+      "needs-trust": "This project needs your trust first.",
+      "project-moved": "The project folder moved or is no longer a plain folder.",
+      "session-not-found": "That session could not be resumed.",
+      "spawn-failed": "The lead terminal could not start.",
+      "stop-failed": "The lead terminal could not be stopped.",
+      "read-failed": "Could not read this project's data.",
+      "busy": "Still working on the last request. Try again in a moment."
+    },
+    "trust": {
+      "title": "TRUST THIS PROJECT?",
+      "body": "You are opening the lead terminal for {{name}} in this folder:",
+      "risk": "Trust lets Claude start this folder's hooks and MCP servers and run in auto mode: it runs commands and edits files without asking. Text in this repo or its tickets can steer what it does. Only trust code you know.",
+      "remembered": "Trust is remembered for this folder.",
+      "untrusted": "Open without trust starts Claude in normal mode. Claude asks in the terminal before it trusts the folder.",
+      "untrustedButClaudeTrusts": "Open without trust starts Claude in normal mode, without auto mode.",
+      "claudeTrustsWarning": "Claude Code already trusts this folder, so its hooks run as soon as the lead starts, whichever you choose. Its MCP servers may still ask for approval in the terminal.",
+      "cancel": "Cancel",
+      "openUntrusted": "Open without trust",
+      "trust": "Trust",
+      "notSaved": "Trust could not be saved, so the lead opened without trust. Claude may ask in the terminal."
+    },
+    "large": {
+      "title": "LARGE SESSION",
+      "body": "This session already uses about {{size}} tokens of context. Resuming it is slow and costly. Start a new session instead?",
+      "bodyUnknown": "This session is large and its context size is unknown. Resuming it may be slow and costly. Start a new session instead?",
+      "cancel": "Cancel",
+      "resume": "Resume anyway",
+      "newSession": "New session"
+    },
+    "sessions": {
+      "title": "SESSIONS",
+      "new": "New session",
+      "empty": "No sessions yet.",
+      "untitled": "(untitled)",
+      "large": "large",
+      "leadRunning": "The lead is running. Stop it to open another session."
+    },
+    "tickets": {
+      "zetahub": "ZETAHUB",
+      "local": "NO TICKET YET",
+      "syncedAt": "Cache from {{time}}",
+      "none": "Nothing open.",
+      "key": "Key",
+      "titleCol": "Title",
+      "status": "Status",
+      "more": "{{count}} more not shown.",
+      "refreshHint": "Run /zetahub-sync to refresh.",
+      "zetahubReason": {
+        "no-key": "No ZetaHub project key is set for this project.",
+        "no-cache": "No ZetaHub cache yet. Run /zetahub-sync.",
+        "not-cached": "This project is not in the ZetaHub cache. Run /zetahub-sync.",
+        "unreadable": "The ZetaHub cache could not be read."
+      },
+      "localReason": {
+        "no-line": "This project's CLAUDE.md has no \"Local open work:\" line.",
+        "unavailable": "The local work file is missing or outside the project.",
+        "unreadable": "The local work file could not be read."
+      }
+    },
+    "terminal": {
+      "starting": "Starting the lead…",
+      "stop": "Stop lead"
+    }
   }
 }

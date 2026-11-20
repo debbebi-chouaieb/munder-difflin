@@ -4,9 +4,8 @@ import { PixelPanel } from './PixelPanel';
 import { PixelBadge } from './PixelBadge';
 import { PixelButton } from './PixelButton';
 import { SpritePortrait } from './SpritePortrait';
-import { PtyTerminalView } from './PtyTerminalView';
-import { terminalInstanceKey } from './terminalRecovery';
-import { MessageQueueComposer } from './MessageQueueComposer';
+import { AgentTerminalPane } from './AgentTerminalPane';
+import { usePtyParser } from '@/hooks/usePtyParser';
 import { CommandCenterPanel } from './CommandCenterPanel';
 import { disposeTerminal } from './terminalPool';
 import { SidebarTabs } from './SidebarTabs';
@@ -18,7 +17,6 @@ import { GitTab } from './GitTab';
 import { Icon } from './Icon';
 import { AgentNameEditor } from './AgentNameEditor';
 import { useStore, type Agent } from '@/store/store';
-import { usePtyParser } from '@/hooks/usePtyParser';
 
 export interface AgentDetailPanelProps {
   agent: Agent;
@@ -76,9 +74,7 @@ export function AgentDetailPanel({ agent }: AgentDetailPanelProps) {
     return () => ro.disconnect();
   }, []);
   const archiveAgent = useStore(s => s.archiveAgent);
-  const updateAgent = useStore(s => s.updateAgent);
   const renameAgent = useStore(s => s.renameAgent);
-  const setFullscreen = useStore(s => s.setFullscreen);
   const fullscreenAgentId = useStore(s => s.fullscreenAgentId);
   const sidebarTab = useStore(s => s.sidebarTab);
   const setSidebarTab = useStore(s => s.setSidebarTab);
@@ -89,7 +85,6 @@ export function AgentDetailPanel({ agent }: AgentDetailPanelProps) {
   // the display and breaks scrolling. So we unmount the embedded one here; it
   // re-mounts and re-fits when fullscreen closes.
   const isFullscreenedHere = fullscreenAgentId === agent.id;
-
   const onPtyStream = usePtyParser(agent.id);
 
   // Michael gets the full command-center dashboard instead of the plain panel.
@@ -245,26 +240,7 @@ export function AgentDetailPanel({ agent }: AgentDetailPanelProps) {
                 {t('agentDetail.fullscreenDesc')}
               </EmptyTab>
             ) : (
-            <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-              <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-                <PtyTerminalView
-                  key={terminalInstanceKey(agent.ptyId, agent.terminalGeneration)}
-                  ptyId={agent.ptyId}
-                  onStreamData={onPtyStream}
-                  onUserPrompt={(t) => {
-                    updateAgent(agent.id, { lastPrompt: t });
-                    if (t.trim().toLowerCase() === '/clear') {
-                      updateAgent(agent.id, { contextTokens: 0, contextLimit: undefined, progress: 0 });
-                    }
-                    void window.cth.historyAdd({ agentId: agent.id, cwd: agent.cwd, text: t });
-                  }}
-                  onToggleFullscreen={() => setFullscreen(agent.id)}
-                  fullscreen={false}
-                  embedded
-                />
-              </div>
-              <MessageQueueComposer agent={agent} />
-            </div>
+            <AgentTerminalPane agent={agent} ptyId={agent.ptyId} onStreamData={onPtyStream} />
             )
           ) : (
             <EmptyTab title={t('agentDetail.noPty')}>

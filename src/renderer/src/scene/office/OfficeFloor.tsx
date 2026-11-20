@@ -16,6 +16,10 @@ import { loadTheme, resolveThemeMap, themeTilesetUrls } from './themeLoader';
 import { buildProjectFloor, type ProjectFloor } from './roomLayout';
 import { projectsTheme } from './projectTheme';
 import { RoomLights, ROOM_LIGHTS_Z } from './RoomLights';
+import { drawCork, SECOND_CORK_X } from './corkBoard';
+import { RoomBoards } from './RoomBoards';
+import { useRoomBoardCounts } from './useRoomBoardCounts';
+import { useRoomPanel } from '@/store/roomPanel';
 import { FLOOR_PENDING, useProjectFloor } from './useProjectFloor';
 import { pickSeat, resolveAnchors, roomDarkness, roomIdForAgent, TECH_LEADS_ROOM, walkTimeoutSeconds } from './projectFloorSpec';
 import {
@@ -192,6 +196,7 @@ export function OfficeFloor() {
   // specRef/tickedRef, and effects run in declaration order, so the scene's
   // init reads the refs for the key it was rebuilt for.
   const projectFloor = useProjectFloor();
+  useRoomBoardCounts(projectFloor.active);
 
   // Is the floor actually on screen? A fullscreen terminal or file editor covers
   // it completely, and a hidden window shows nothing at all — but the Pixi ticker
@@ -1093,24 +1098,9 @@ export function OfficeFloor() {
         deskNoteG.clear();
       };
 
-      /** One cork board with a colored header at local x `ox`; draws up to 12
-       *  of `notes`, overflow as a corner pile. */
-      const drawCork = (ox: number, header: number, notes: string[]): void => {
-        boardG.rect(ox, -8, 30, 22).fill(0x6e5639);        // frame
-        boardG.rect(ox + 1, -7, 28, 3).fill(header);       // header strip
-        boardG.rect(ox + 1, -4, 28, 17).fill(0xc9b083);    // cork
-        const n = Math.min(notes.length, 12);
-        for (let i = 0; i < n; i++) {
-          const x = ox + 3 + (i % 4) * 7;
-          const y = -2 + Math.floor(i / 4) * 5;
-          boardG.rect(x, y, 5, 4).fill(NOTE_COLORS[notes[i]] ?? 0xf2eddc);
-          boardG.rect(x + 2, y, 1, 1).fill(0x4a3b52);      // pin
-        }
-        if (notes.length > 12) {
-          boardG.rect(ox + 22, 8, 5, 4).fill(0xe8e0c8);
-          boardG.rect(ox + 23, 7, 5, 4).fill(0xf2eddc);
-        }
-      };
+      /** One cork board at local x `ox`; notes are task statuses. */
+      const drawStatusCork = (ox: number, header: number, notes: string[]): void =>
+        drawCork(boardG, ox, header, notes.map((status) => NOTE_COLORS[status] ?? 0xf2eddc));
 
       const drawTaskBoard = (tasks: BoardTask[]): void => {
         boardG.clear();
@@ -1142,8 +1132,8 @@ export function OfficeFloor() {
           g.rect(idx * 7, -(idx % 2), 5, 4).fill(NOTE_COLORS.doing);
           g.rect(idx * 7 + 2, -(idx % 2), 1, 1).fill(0x4a3b52);
         }
-        drawCork(0, NOTE_COLORS.blocked, blocked);   // left: what's burning
-        drawCork(34, NOTE_COLORS.todo, todoNotes);   // right: what's queued
+        drawStatusCork(0, NOTE_COLORS.blocked, blocked);   // left: what's burning
+        drawStatusCork(SECOND_CORK_X, NOTE_COLORS.todo, todoNotes);   // right: what's queued
         // The archive table: every finished task adds a green sheet to the
         // pile (visible stack capped at 6 — beyond that it just sits proud).
         boardG.rect(68, 6, 14, 4).fill(0xb08d5e);    // table top
@@ -1738,6 +1728,19 @@ export function OfficeFloor() {
       // floor is rebuilt without it. Targets are recomputed twice a second.
       const roomLights = theme.rooms ? new RoomLights(theme.rooms, mapRenderer.tileSize, ROOM_LIGHTS_Z) : null;
       if (roomLights) charLayer.addChild(roomLights.container);
+
+      // ─── Project rooms: open the room panel, ticket-count boards (ADR 0005) ──
+      if (theme.rooms) {
+        (app as any).__roomBoards = new RoomBoards({
+          rooms: theme.rooms,
+          tileSize: mapRenderer.tileSize,
+          colors: { zetahub: NOTE_COLORS.doing, local: NOTE_COLORS.todo },
+          makeGraphics: () => new Graphics(),
+          addChild: (g) => { charLayer.addChild(g); },
+          onPick: (roomId) => useRoomPanel.getState().selectRoom(roomId),
+          counts: useRoomPanel
+        });
+      }
       let lightsClock = 0;
       const updateRoomLights = (dt: number): void => {
         if (!roomLights || !theme.rooms) return;
@@ -1846,6 +1849,7 @@ export function OfficeFloor() {
         (a as any).__glRecovery?.();
         (a as any).__resize?.disconnect?.();
         try { (a as any).__unsub?.(); } catch { /* noop */ }
+        try { (a as any).__roomBoards?.destroy(); } catch { /* noop */ }
         try { (a as any).__offMessage?.(); } catch { /* noop */ }
         try { clearInterval((a as any).__taskBoardPoll); } catch { /* noop */ }
         safeDestroy(a);

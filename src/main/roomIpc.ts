@@ -10,6 +10,7 @@ import {
   sameOpenRequest,
   type LeadSpawnOptions,
   type OpenRequest,
+  type OpenTerminalResult,
   type RoomDone,
   type RoomResult
 } from '../shared/roomLead';
@@ -35,10 +36,12 @@ export interface RoomDeps {
   /** Saves stored project fields; false when the write failed. */
   patchProject: (projectId: string, patch: { leadAgentId?: string; trustedPath?: string }) => boolean;
   killLead: (agentId: string) => { ok: boolean; error?: string };
+  /** Removes the lead's card from the window; harmless when it is already gone. */
+  archiveLead: (agentId: string) => void;
   log: (line: string) => void;
 }
 
-export type OpenResult = RoomResult<{ agentId: string; alreadyRunning: boolean }>;
+export type OpenResult = OpenTerminalResult;
 
 export interface RoomHandlers {
   sessions: (projectId: unknown) => Promise<RoomResult<{ sessions: SessionSummary[] }>>;
@@ -62,8 +65,11 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     const agentId = leadAgentIdFor(project);
     const cwd = await deps.resolveProjectCwd(project.path);
     if (!cwd) return { ok: false, error: 'project-moved' };
-    if (!project.trusted && request.trust === null) {
-      return { ok: false, error: 'needs-trust', claudeTrusts: await deps.claudeTrusts(cwd) };
+    // Ask when no answer was given, and again when the project now points at a
+    // different folder than the one the person said "yes" to.
+    if (!project.trusted && (request.trust === null || (request.trust === 'yes' && request.trustPath !== project.path))) {
+      if (request.trust === 'yes') deps.log(`[room] trust answer for ${project.id} named another folder; asking again`);
+      return { ok: false, error: 'needs-trust', path: project.path, claudeTrusts: await deps.claudeTrusts(cwd) };
     }
     if (request.sessionId !== null) {
       const summary = await deps.sessions.summaryOf(project.path, request.sessionId);
@@ -85,7 +91,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     if (project.leadAgentId !== agentId && !deps.patchProject(project.id, { leadAgentId: agentId })) {
       deps.log(`[room] could not store the lead id of ${project.id}`);
     }
-    return { ok: true, agentId, alreadyRunning: false };
+    return { ok: true, agentId, alreadyRunning: false, untrusted: !trusted };
   };
 
   return {
@@ -119,7 +125,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       const agentId = leadAgentIdFor(project);
       if (deps.isRunning(agentId)) {
         deps.announceLead(agentId, `${project.name} lead`, (await deps.resolveProjectCwd(project.path)) ?? project.path, sender);
-        return { ok: true, agentId, alreadyRunning: true };
+        return { ok: true, agentId, alreadyRunning: true, untrusted: !project.trusted };
       }
       const pending = opening.get(project.id);
       // A double click shares the open; a different request waits for the person to retry.
@@ -139,7 +145,12 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       const pending = opening.get(project.id);
       if (pending) await pending.result;
       const agentId = leadAgentIdFor(project);
-      if (!deps.isRunning(agentId)) return { ok: true, done: true };
+      // A lead that exited on its own (answered "no" at Claude's prompt, /exit, a
+      // crash) leaves its card behind: Stop clears it so the room is usable again.
+      if (!deps.isRunning(agentId)) {
+        deps.archiveLead(agentId);
+        return { ok: true, done: true };
+      }
       const res = deps.killLead(agentId);
       if (!res.ok) {
         deps.log(`[room] stop failed for ${project.id}: ${res.error ?? 'no detail'}`);
