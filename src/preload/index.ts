@@ -6,6 +6,9 @@ import type { IntegrationRecord, IntegrationTemplate } from '../shared/integrati
 export type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 import type { UpdateStatus } from '../shared/updateState';
 import type { ProjectResult, ProjectsSnapshot } from '../shared/project';
+import type { OpenTerminalRequest, RoomDone, RoomResult } from '../shared/roomLead';
+import type { SessionSummary } from '../shared/sessionList';
+import type { RoomTickets } from '../shared/ticketSources';
 export type { UpdateStatus } from '../shared/updateState';
 import type { ToolStatus } from '../shared/toolCatalog';
 export type { ToolStatus } from '../shared/toolCatalog';
@@ -495,6 +498,8 @@ export interface AgentControlSnapshot {
   autoDeliveryPaused: boolean;
   gatedTools: string[];
   pendingSteers: number;
+  /** The agent may be at Claude's trust prompt: nothing may type into it (ADR 0005). */
+  trustPending?: boolean;
 }
 
 /** Circuit-breaker state (Lane A #6 → this lane's avatars/meter). */
@@ -644,6 +649,15 @@ const api = {
     ipcRenderer.invoke('projects:setParallel', id, parallel),
   setProjectZetahubKey: (id: string, key: string | null): Promise<ProjectResult> =>
     ipcRenderer.invoke('projects:setZetahubKey', id, key),
+  // Project rooms (ADR 0005): every call takes a project id only.
+  roomSessions: (projectId: string): Promise<RoomResult<{ sessions: SessionSummary[] }>> =>
+    ipcRenderer.invoke('room:sessions', projectId),
+  roomTickets: (projectId: string): Promise<RoomResult<{ tickets: RoomTickets }>> =>
+    ipcRenderer.invoke('room:tickets', projectId),
+  roomOpenTerminal: (projectId: string, request?: OpenTerminalRequest): Promise<RoomResult<{ agentId: string; alreadyRunning: boolean }>> =>
+    ipcRenderer.invoke('room:openTerminal', projectId, request ?? null),
+  roomCloseTerminal: (projectId: string): Promise<RoomDone> =>
+    ipcRenderer.invoke('room:closeTerminal', projectId),
   onProjectsChanged: (cb: (snapshot: ProjectsSnapshot) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, payload: ProjectsSnapshot) => cb(payload);
     ipcRenderer.on('projects:changed', listener);

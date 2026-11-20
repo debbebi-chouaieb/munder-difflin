@@ -796,6 +796,11 @@ export class PtyManager {
     }));
   }
 
+  /** True while a PTY with this id is alive (sessions holds live PTYs only). */
+  has(id: string): boolean {
+    return this.sessions.has(id);
+  }
+
   /** Epoch ms of this PTY's most recent output, or undefined if no such PTY. */
   lastOutputAt(id: string): number | undefined {
     return this.sessions.get(id)?.lastOutputAt;

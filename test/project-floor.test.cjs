@@ -13,7 +13,8 @@ const spec = loadTs('src/renderer/src/scene/office/projectFloorSpec.ts');
 
 const project = (id, enabled) => ({
   id, name: id, path: `D:\\zetabox\\${id}`, enabled, parallel: false,
-  zetahubKey: null, zetahubKeySource: null, hasClaudeMd: false, agents: [], leadAgentId: null
+  zetahubKey: null, zetahubKeySource: null, hasClaudeMd: false, agents: [], leadAgentId: null,
+  trusted: false, localWorkPath: null
 });
 const agent = (id, cwd, status = 'idle', extra = {}) => ({ id, cwd, status, ...extra });
 

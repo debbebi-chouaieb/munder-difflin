@@ -15,10 +15,20 @@ export interface StoredProject {
   zetahubKey?: string;
   /** The project lead agent (ADR 0003), set once it is spawned. */
   leadAgentId?: string;
+  /**
+   * The folder the user trusted for room leads (ADR 0005): folder-trust pre-accept
+   * and auto mode. Bound to the path, so a project id that shifts to another
+   * folder (slug collision, folder removed) does not carry trust with it.
+   */
+  trustedPath?: string;
 }
 
 /** A change to one project. `zetahubKey: null` removes the user-set key. */
-export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey'>> & { zetahubKey?: string | null };
+export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath'>> & {
+  zetahubKey?: string | null;
+  /** Null removes trust. */
+  trustedPath?: string | null;
+};
 
 export interface ProjectsFile {
   version: 1;
@@ -52,6 +62,9 @@ export interface Project {
   /** The project's own agents (`.claude/agents/<name>.md`): desks started on demand. */
   agents: string[];
   leadAgentId: string | null;
+  trusted: boolean;
+  /** Relative path from the "Local open work:" line of CLAUDE.md (ADR 0005), or null. */
+  localWorkPath: string | null;
 }
 
 export interface ProjectsSnapshot {
@@ -115,6 +128,24 @@ export function parseZetahubKey(claudeMd: string | null): string | null {
   return isValidZetahubKey(key) ? key : null;
 }
 
+const MAX_TRUSTED_PATH = 1024;
+
+/** Path equality that ignores slash direction, a trailing slash and case (Windows folders). */
+export function samePath(a: string, b: string): boolean {
+  const norm = (p: string): string => p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+  return norm(a) === norm(b);
+}
+
+/**
+ * The relative path in a line such as "Local open work: `docs/in-progress.md`".
+ * Back-ticks are required, so prose never reads as a path.
+ */
+export function parseLocalWorkPath(claudeMd: string | null): string | null {
+  if (!claudeMd) return null;
+  const match = /[Ll]ocal open work\s*[:=]\s*`([^`\r\n]{1,200})`/.exec(claudeMd);
+  return match ? match[1].trim() || null : null;
+}
+
 /** User input for a key: empty clears it, anything else must be a valid key. */
 export function normalizeZetahubKey(input: unknown): { ok: true; key: string | null } | { ok: false } {
   if (input === null) return { ok: true, key: null };
@@ -173,7 +204,9 @@ export function mergeProjects(folders: ProjectFolder[], stored: ProjectsFile): P
         zetahubKeySource: userKey ? 'user' : fileKey ? 'claude-md' : null,
         hasClaudeMd: folder.claudeMd !== null,
         agents: agentNamesFrom(folder.agentFiles),
-        leadAgentId: saved?.leadAgentId ?? null
+        leadAgentId: saved?.leadAgentId ?? null,
+        trusted: !!saved?.trustedPath && samePath(saved.trustedPath, folder.path),
+        localWorkPath: parseLocalWorkPath(folder.claudeMd)
       };
     });
 }
@@ -191,7 +224,8 @@ export function parseProjectsFile(raw: unknown): ProjectsFile {
       enabled: v.enabled === true,
       parallel: v.parallel === true,
       ...(typeof v.zetahubKey === 'string' && isValidZetahubKey(v.zetahubKey) ? { zetahubKey: v.zetahubKey } : {}),
-      ...(typeof v.leadAgentId === 'string' && v.leadAgentId ? { leadAgentId: v.leadAgentId } : {})
+      ...(typeof v.leadAgentId === 'string' && v.leadAgentId ? { leadAgentId: v.leadAgentId } : {}),
+      ...(typeof v.trustedPath === 'string' && v.trustedPath && v.trustedPath.length <= MAX_TRUSTED_PATH ? { trustedPath: v.trustedPath } : {})
     };
   }
   return file;
@@ -234,6 +268,10 @@ export function patchStoredProject(file: ProjectsFile, id: string, patch: Stored
   if (patch.zetahubKey === null) delete next.zetahubKey;
   else if (typeof patch.zetahubKey === 'string') next.zetahubKey = patch.zetahubKey;
   if (typeof patch.leadAgentId === 'string') next.leadAgentId = patch.leadAgentId;
+  if (patch.trustedPath === null) delete next.trustedPath;
+  else if (typeof patch.trustedPath === 'string' && patch.trustedPath && patch.trustedPath.length <= MAX_TRUSTED_PATH) {
+    next.trustedPath = patch.trustedPath;
+  }
   const projects: Record<string, StoredProject> = Object.assign(Object.create(null), file.projects);
   projects[id] = next;
   return { version: 1, projects };

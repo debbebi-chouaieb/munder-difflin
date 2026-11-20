@@ -7,9 +7,15 @@ Update this file whenever a work item starts, finishes, or a new gap appears.
 munder-difflin has no ZetaHub project, so its work is tracked here as local tickets. The `backlog` skill reads
 only this section. One bullet per item: what, then (source, date). Remove a bullet when it is done.
 
-- Phase 4: one project lead conversation per project and parallel work enforced in main; adds `projectId`/`scope` on agents (ADR 0003, ADR 0004, 2026-11-19)
+- Rooms-b: main readers and IPC with tests: `room:sessions`, `room:tickets`, `room:openTerminal`, `room:closeTerminal` (project id only), per-project trust (ADR 0005, 2026-11-20)
+- Rooms-c: room click, RoomPanel (sessions, lazy lead terminal, ZetaHub and local tables), two count boards per room, en/ar/zh-CN (ADR 0005, ADR 0003 amended, 2026-11-20)
+- Rooms-d: PTY performance: `pty:data` coalescing for all PTYs, room scrollback 10 000, room terminal cap, idle shutdown, config `roomPtyCap`/`roomIdleMinutes` (ADR 0005, 2026-11-20)
+- Rooms-e: reviewer and security-auditor on `room:*` IPC, lead spawn and the `~/.claude` reads; test-runner against the known failing list (ADR 0005, 2026-11-20)
+- Rooms trust follow-ups: bind `trustedPath` to the git root commit so a re-clone at the same path asks again; extract the three "spawn then announce" copies in index.ts; re-check the lead cwd right before ptyManager.spawn (security audit, 2026-11-20)
+- Rooms refresh (deferred): in-app ZetaHub refresh. `runHiddenClaude` uses bypassPermissions while a sync reads user-written ticket text; needs a restricted tool list or a direct client first (pm review, 2026-11-20)
+- Phase 4: parallel work enforced in main; adds `projectId`/`scope` on agents. The lead conversation part moved to Rooms-b/c (ADR 0004, 2026-11-20)
 - Phase 4 also: project picker in AddAgentModal (projects list + global option); explicit projectId so agents in worktrees count in their room (deferred from Phase 2, 2026-11-19)
-- Phase 5: Android devices from `adb devices` in the office and on tasks (ADR 0005 to write at the phase brief, 2026-11-19)
+- Phase 6: Android devices from `adb devices` in the office and on tasks (ADR 0006 to write at the phase brief; 0005 went to the room panel, 2026-11-20)
 - Privacy: upstream click-through links in Settings and the update toast still point at the upstream project. Migration of profiles that already saved `true` skipped by decision (review, 2026-11-19)
 - 7 focused tests fail on upstream HEAD too (agent-token-cap, arabic-terminal, hire-import, model-catalog-remote, provider-config, release-notes, telemetry-message-count); 16 more fail on this Windows machine for symlink EPERM and socket EACCES (2026-11-19)
 - Agent sidebar width limits (320/1200, reset 420) are repeated in store.ts, SidebarSplitter defaults and splitterRules; move them next to the project sidebar constants. Floor budget uses window width, not the real row (padding and handles) (review, 2026-11-20)

@@ -28,6 +28,17 @@ We chose **A**.
 - Selecting a project in the sidebar opens the lead's terminal.
 - The god prompt routes project work to the lead; the lead prompt delegates inside its project.
 
+### Amendment (2026-11-20, ADR 0005)
+- Enabling a project creates nothing. The lead's registry record and PTY are created on the first open from the
+  project room (`room:openTerminal`).
+- The user picks which session to resume from the room's session list, or starts a new one. Hook capture then
+  records it as the lead's session, as for any agent.
+- A lead runs with folder-trust pre-accept and auto mode only for a project the user trusted (ADR 0005).
+- Clicking the project room opens the RoomPanel (ADR 0005), which hosts the lead's terminal. Selecting a project in
+  the sidebar is no longer the trigger.
+- At most `roomPtyCap` (default 3) lead terminals run at once, and idle ones that are not on screen stop after
+  `roomIdleMinutes` (default 30).
+
 ## Consequences
 - Running cost grows with the number of enabled projects; projects are disabled by default on first discovery.
 - `fleet.json` and the roster context carry project, scope and lead so the models can route.

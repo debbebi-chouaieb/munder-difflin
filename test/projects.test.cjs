@@ -378,3 +378,36 @@ test('the service refuses unknown ids, bad keys and missing hives', async (t) =>
   await noHive.rescan();
   assert.deepEqual(noHive.patch('mdm-core', { enabled: true }), { ok: false, error: 'no hive yet' });
 });
+
+// ─── trust for room leads (ADR 0005) ────────────────────────────────────────
+
+test('trust: off by default, on only for the stored folder path', () => {
+  const stored = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, trustedPath: 'D:\\ws\\App\\' } } });
+  const [same] = shared.mergeProjects([folder('App', { path: 'd:/ws/app' })], stored);
+  assert.equal(same.trusted, true);
+  const [moved] = shared.mergeProjects([folder('App', { path: 'D:/ws2/App' })], stored);
+  assert.equal(moved.trusted, false);
+  const [fresh] = shared.mergeProjects([folder('App')], { version: 1, projects: {} });
+  assert.equal(fresh.trusted, false);
+});
+
+test('trust: the file accepts only a non-empty path string', () => {
+  for (const bad of [true, false, '', 42, null, 'x'.repeat(1025)]) {
+    const file = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, trustedPath: bad } } });
+    assert.equal('trustedPath' in file.projects.app, false, String(bad));
+  }
+});
+
+test('trust: patch sets and removes the path, ignores junk', () => {
+  const base = { version: 1, projects: {} };
+  const on = shared.patchStoredProject(base, 'app', { trustedPath: 'D:/ws/App' });
+  assert.equal(on.projects.app.trustedPath, 'D:/ws/App');
+  assert.equal('trustedPath' in shared.patchStoredProject(on, 'app', { trustedPath: null }).projects.app, false);
+  assert.equal(shared.patchStoredProject(on, 'app', { trustedPath: '' }).projects.app.trustedPath, 'D:/ws/App');
+  assert.equal(shared.patchStoredProject(on, 'app', {}).projects.app.trustedPath, 'D:/ws/App');
+});
+
+test('local open work path is read at scan time', () => {
+  const [p] = shared.mergeProjects([folder('App', { claudeMd: 'Local open work: `docs/in-progress.md`' })], { version: 1, projects: {} });
+  assert.equal(p.localWorkPath, 'docs/in-progress.md');
+});

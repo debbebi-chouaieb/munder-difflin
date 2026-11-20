@@ -33,7 +33,14 @@ import { MemoryManager } from './memory';
 import { KnowledgeManager } from './knowledge';
 import { MemoryReflector, type ReflectSettings } from './reflect';
 import { PersistStore } from './db';
-import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd } from './transcript';
+import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd, projectDir } from './transcript';
+import { lstat, readFile, stat } from 'node:fs/promises';
+import { SessionLister } from './projectSessions';
+import { readRoomTickets } from './projectTickets';
+import { createRoomHandlers, registerRoomIpc } from './roomIpc';
+import { isLeadAgentId, leadMustRunUntrusted, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
+import { claudeTrustCovers, hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
+import type { Project } from '../shared/project';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
 import {
@@ -66,7 +73,7 @@ import * as integrations from './integrations';
 import { validateBaseUrl, buildAuthHeaders, resolveUpstreamUrl, secretRefFor, INTEGRATION_TEMPLATES } from '../shared/integrations';
 import { RosterStore } from './roster';
 import { buildWorkerLaunch } from './workerLaunch';
-import { ControlRegistry } from './control';
+import { ControlRegistry, type AgentControlSnapshot } from './control';
 import { WorkerWakeWatchdog, WORKER_WAKE_REPORT_MS, activityEvidenceAt, type WorkerWakeFacts } from './workerWake';
 import { inboxNudgeText } from '../shared/hiveNudge';
 import { resolveGodName } from '../shared/godIdentity';
@@ -305,6 +312,9 @@ function standingGoalFromRoster(agentId: string): string | null {
 const workerWake = new WorkerWakeWatchdog();
 // HookServer needs BOTH: Oscar's control registry (HITL pause/gate/steer/halt via
 // hook returns) AND Jim's breaker (feed recordToolUse on each PostToolUse).
+// Untrusted room leads may sit at Claude's trust prompt, whose default is "yes":
+// no automation types into them until a hook event proves Claude is past it.
+const trustPromptGate = new TrustPromptGate();
 const hookServer = new HookServer(
   hive,
   () => liveWebContents(),
@@ -312,7 +322,10 @@ const hookServer = new HookServer(
   control,
   breaker,
   standingGoalFromRoster,
-  (agentId, event, message) => workerWake.noteHook(agentId, event, message)
+  (agentId, event, message) => {
+    if (agentId && hookProvesTurn(event)) trustPromptGate.release(agentId);
+    workerWake.noteHook(agentId, event, message);
+  }
 );
 const memory = new MemoryManager(
   () => readConfig().harnessHome,
@@ -455,6 +468,8 @@ function teardownPty(id: string): void {
   try { integrationBroker.revoke(id); } catch { /* best-effort */ }
   // 1) Archive the agent — retained + flagged; only live-PTY agents are active.
   const agentId = ptyToAgent.get(id);
+  // Held by agent id, or by pty id for a spawn without hive meta.
+  trustPromptGate.release(agentId ?? id);
   if (agentId) {
     ptyToAgent.delete(id);
     // Drop watchdog state so a dead agent can't get nudged or leak its grace.
@@ -2599,7 +2614,7 @@ function findCodexHomeForSession(sessionId: string, siblingsRoot: string): strin
 
 /** Spawn options shared by the `pty:spawn` IPC handler and the god-triggered
  *  ephemeral-worker watcher. */
-type AgentSpawnOptions = SpawnOptions & { hive?: AgentMeta; isolate?: boolean; resume?: boolean; requireResume?: boolean; resumeSessionId?: string; provider?: AgentProvider; noAutoInstall?: boolean };
+type AgentSpawnOptions = SpawnOptions & { hive?: AgentMeta; isolate?: boolean; resume?: boolean; requireResume?: boolean; resumeSessionId?: string; provider?: AgentProvider; noAutoInstall?: boolean; untrusted?: boolean };
 
 /** Map a `ptyManager.spawn` failure string to the closed `agent_spawn_failed.reason`
  *  enum (analytics.ts). The two known strings come from PtyManager.spawn; anything
@@ -2638,6 +2653,13 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // returned to the caller so the renderer records the same absolute path.
   opts.cwd = expandTilde(opts.cwd);
   if (opts.hive) opts.hive = { ...opts.hive, cwd: expandTilde(opts.hive.cwd) };
+  // Trust for a project lead is decided here, not by the caller (ADR 0005): Restore
+  // team and a card restart reach this through pty:spawn and never pass `untrusted`.
+  // Only leads wait for the project list, and never for long.
+  const leadId = opts.hive?.id ?? opts.id;
+  if (isLeadAgentId(leadId) && leadMustRunUntrusted(leadId, await projectsWithin(LEAD_TRUST_WAIT_MS))) {
+    opts.untrusted = true;
+  }
   // Never start an agent in a network folder: even checking it (isRepo below)
   // makes Windows authenticate to that server with the user's credentials.
   if (isNetworkPath(opts.cwd) || (opts.hive && isNetworkPath(opts.hive.cwd))) {
@@ -2828,6 +2850,9 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   let didResume = false;
   // Claude-only — these are Claude Code flags; other CLIs carry their own flags
   // in the command string the renderer already built.
+  // Replayed args (card restart, Restore team) may carry the bypass flag the
+  // renderer baked in under auto mode; an untrusted lead must not keep it.
+  if (claudeProvider && opts.untrusted === true) opts.args = withoutClaudeBypassArgs(opts.args ?? []);
   if (opts.hive && claudeProvider) {
     const cfg = readConfig();
     // Permission posture (D9): only a GUI hire (Add Agent) builds its command
@@ -2843,7 +2868,8 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
     // Confirmed live: a worker spawned without this flag deadlocked — a
     // cross-session message to it came back "held for the recipient user's
     // approval" with no surface for anyone to ever grant that approval.
-    const args = argsWithAutoModeFlag(opts.args ?? [], cfg.autoMode, provider);
+    // An untrusted room lead (ADR 0005) never gets the auto-mode bypass flag.
+    const args = argsWithAutoModeFlag(opts.args ?? [], spawnPosture(opts.untrusted === true, !!cfg.autoMode).autoMode, provider);
     // Model precedence: an explicit per-agent --model (from the renderer) wins;
     // else the user's global defaultModel; else the role-based default tier. The
     // GOD is special-cased: it has its own engine config (godProvider/godModel), so
@@ -2959,7 +2985,9 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // agent (spawned with --permission-mode bypassPermissions) doesn't stall on an
   // interactive prompt it can't answer and exit code 1. Best-effort, never blocks.
   // Claude-only — other CLIs handle their own permission UX.
-  if (claudeProvider) {
+  // An untrusted room lead (ADR 0005) skips the pre-accept, so Claude shows its own
+  // folder-trust prompt in the terminal before any repo hook or MCP server runs.
+  if (claudeProvider && spawnPosture(opts.untrusted === true, false).preAcceptTrust) {
     try { ensureClaudePermissionsAccepted(opts.cwd); } catch { /* never block spawn */ }
   }
   // Suppress first-run interactive prompts for providers that need it (e.g. Codex
@@ -3028,6 +3056,7 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
     await enableCodexRemoteForSpawn(opts, opts.hive.id);
   }
   const res = ptyManager.spawn(opts, owner);
+  if (res.ok && claudeProvider && opts.untrusted === true) trustPromptGate.hold(leadId);
   if (res.ok) analytics.track('agent_spawned', { provider });
   else analytics.track('agent_spawn_failed', { provider, reason: spawnFailReason(res.error) });
   syncKeepAwake(); // arm the power-save blocker while ≥1 agent PTY is alive (#18)
@@ -4068,8 +4097,8 @@ ipcMain.handle('control:halt', (_evt, agentId: unknown) => {
   control.halt(agentId);
   return control.snapshot(agentId);
 });
-ipcMain.handle('control:snapshot', (_evt, agentId: unknown) =>
-  typeof agentId === 'string' ? control.snapshot(agentId) : null);
+ipcMain.handle('control:snapshot', (_evt, agentId: unknown): (AgentControlSnapshot & { trustPending: boolean }) | null =>
+  typeof agentId === 'string' ? { ...control.snapshot(agentId), trustPending: trustPromptGate.blocks(agentId) } : null);
 
 // ─── IPC: scheduled missions (recurring auto-dispatch) ──────────────────────
 ipcMain.handle('missions:list', () => readConfig().missions ?? []);
@@ -4521,6 +4550,89 @@ const projectService = new ProjectService({
   log: (message) => console.error(message)
 });
 registerProjectsIpc(projectService);
+
+// ─── IPC: project rooms (ADR 0005) ───────────────────────────────────────────
+/** A stalled scan (a slow mapped drive) must not hang a lead spawn; late means untrusted. */
+const LEAD_TRUST_WAIT_MS = 2000;
+const CLAUDE_CONFIG_MAX_BYTES = 32 * 1024 * 1024;
+async function projectsWithin(ms: number): Promise<Project[] | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+  try {
+    return await Promise.race([projectService.current().then((s) => s.projects), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+// Sessions, ticket tables and the lead's terminal of a project. The renderer
+// sends a project id only; the lead runs through the shared spawn core.
+const sessionLister = new SessionLister({ dirFor: projectDir, log: (line) => console.error(line) });
+// The window that opened each lead, so its archive goes where its card was made.
+const leadOwners = new Map<string, Electron.WebContents>();
+const leadWindow = (agentId: string): Electron.WebContents | null => {
+  const owner = leadOwners.get(agentId);
+  return owner && !owner.isDestroyed() ? owner : liveWebContents();
+};
+const announceLead = (id: string, name: string, cwd: string, target: Electron.WebContents | null): void => {
+  try {
+    if (target && !target.isDestroyed()) target.send('hive:agentSpawned', { id, name, provider: 'claude', cwd, command: 'claude', role: 'lead' });
+  } catch { /* window torn down */ }
+};
+registerRoomIpc(createRoomHandlers({
+  projects: async () => (await projectService.current()).projects,
+  claudeTrusts: async (cwd) => {
+    const file = join(homedir(), '.claude.json');
+    try {
+      if ((await stat(file)).size > CLAUDE_CONFIG_MAX_BYTES) {
+        console.error('[room] ~/.claude.json too big to check folder trust');
+        return false;
+      }
+      return claudeTrustCovers(JSON.parse(await readFile(file, 'utf8')), cwd, process.platform === 'win32');
+    } catch (e) {
+      // No readable config: Claude will ask, which is what "no" promises.
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error(`[room] could not read ~/.claude.json: ${e instanceof Error ? e.message : String(e)}`);
+      return false;
+    }
+  },
+  resolveProjectCwd: async (projectPath) => {
+    const root = readConfig().workspaceRoot;
+    if (!root) return null;
+    try {
+      if ((await lstat(projectPath)).isSymbolicLink()) return null;
+    } catch {
+      return null;
+    }
+    return resolveAllowedRoot(projectPath, [root]);
+  },
+  sessions: sessionLister,
+  tickets: (project) => readRoomTickets(project, (line) => console.error(line)),
+  isRunning: (agentId) => ptyManager.has(agentId),
+  spawnLead: async (opts, sender) => {
+    const owner = sender ? BrowserWindow.fromWebContents(sender)?.webContents ?? null : null;
+    const res = await spawnAgentCore({ ...opts, hive: { ...opts.hive } }, owner);
+    // Main started this agent, so the floor only cards it from this broadcast.
+    if (res.ok) {
+      if (owner) leadOwners.set(opts.id, owner);
+      announceLead(opts.id, opts.hive.name, res.cwd ?? opts.cwd, owner ?? liveWebContents());
+    }
+    return res;
+  },
+  announceLead: (id, name, cwd, sender) => announceLead(id, name, cwd, sender ?? leadWindow(id)),
+  patchProject: (projectId, patch) => {
+    const res = projectService.patch(projectId, patch);
+    if (!res.ok) console.error(`[room] project ${projectId} not saved: ${res.error}`);
+    return res.ok;
+  },
+  killLead: (agentId) => {
+    const res = ptyManager.kill(agentId);
+    teardownPty(agentId);
+    const target = leadWindow(agentId);
+    leadOwners.delete(agentId);
+    try { target?.send('hive:agentArchived', { id: agentId }); } catch { /* window torn down */ }
+    return res;
+  },
+  log: (line) => console.error(line)
+}));
 
 // ─── IPC: Realtime Michael voice ACTIONS (rt-5, Phase 2) ─────────────────────
 // Thin adapters over the SAME main fns the god PTY already uses. ALL of the safety
@@ -5297,7 +5409,7 @@ function runWorkerWakeBeat(): void {
   const now = Date.now();
   const facts: WorkerWakeFacts[] = [];
   for (const [agentId, a] of Object.entries(reg.agents)) {
-    if (agentId === reg.godId || a?.archived) continue;
+    if (agentId === reg.godId || a?.archived || trustPromptGate.blocks(agentId)) continue;
     const ptyId = ptyForAgent(agentId);
     if (!ptyId) continue;
     const snap = control.snapshot(agentId);
