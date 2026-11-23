@@ -11,5 +11,13 @@ export function cleanText(value: unknown, maxChars: number): string | null {
   if (typeof value !== 'string') return null;
   const oneLine = value.replace(UNSAFE_CHARS, ' ').replace(/\s+/g, ' ').trim();
   if (!oneLine) return null;
-  return oneLine.length > maxChars ? `${oneLine.slice(0, Math.max(0, maxChars - 1))}…` : oneLine;
+  if (oneLine.length <= maxChars) return oneLine;
+  let cut = Math.max(0, maxChars - 1);
+  // Never end on the first half of a surrogate pair: a lone half renders as junk.
+  if (cut > 0 && isHighSurrogate(oneLine.charCodeAt(cut - 1))) cut--;
+  return `${oneLine.slice(0, cut)}…`;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
 }

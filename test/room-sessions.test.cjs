@@ -75,6 +75,10 @@ test('title falls back from custom to ai to first prompt to a short id', () => {
 test('untrusted text: one line, no control or bidi override characters, capped', () => {
   assert.equal(cleanText('a\u202eb\u0007c\nd', 50), 'a b c d');
   assert.equal(cleanText('x'.repeat(300), 120).length, 120);
+  // A cut never leaves half of an emoji (a surrogate pair) behind.
+  const cut = cleanText(`ab${'\u{1F600}'.repeat(5)}`, 4);
+  assert.equal(cut, 'ab…');
+  assert.equal(/[\ud800-\udbff](?![\udc00-\udfff])/.test(cut), false);
   assert.ok(cleanText('x'.repeat(300), 120).endsWith('…'));
   assert.equal(cleanText('\u2066\u2069  ', 10), null);
   assert.equal(cleanText(42, 10), null);
@@ -174,6 +178,20 @@ test('lister: calls within the reuse window share one read', async () => {
   assert.equal(a, b);
   now += 2500;
   assert.notEqual(l.list('D:/p'), a);
+});
+
+test('lister: a late failure of an old read does not drop the newer shared read', async () => {
+  let now = 1000;
+  const { l } = lister(tempDir(), { reuseMs: 2000, now: () => now });
+  let failOld;
+  l.read = () => new Promise((_resolve, reject) => { failOld = () => reject(new Error('disk gone')); });
+  const old = l.list('D:/p');
+  now += 2500;
+  l.read = async () => [];
+  const fresh = l.list('D:/p');
+  failOld();
+  await assert.rejects(old);
+  assert.equal(l.list('D:/p'), fresh);
 });
 
 test('lister: cache keeps the most recently used entries within its cap', async () => {

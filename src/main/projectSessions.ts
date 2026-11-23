@@ -62,9 +62,13 @@ export class SessionLister {
     const hit = this.recent.get(key);
     if (hit && this.now() - hit.at < this.reuseMs) return hit.result;
     const result = this.read(projectPath);
-    this.recent.set(key, { at: this.now(), result });
-    // A failed read must not be reused.
-    result.catch(() => this.recent.delete(key));
+    const entry = { at: this.now(), result };
+    // One entry per project path, so the map is bounded by the project count.
+    this.recent.set(key, entry);
+    // A failed read must not be reused; a newer entry for the same project stays.
+    result.catch(() => {
+      if (this.recent.get(key) === entry) this.recent.delete(key);
+    });
     return result;
   }
 
