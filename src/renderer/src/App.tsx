@@ -5,6 +5,7 @@ import type { HarnessConfig } from '@/store/config';
 import { DEFAULT_ORG_TRIGGER } from '@shared/triggers';
 import { OfficeFloor } from '@/scene/office/OfficeFloor';
 import { useHive } from '@/hooks/useHive';
+import { useRoomIdleShutdown } from '@/hooks/useRoomIdleShutdown';
 import { useResolvedGodName } from '@/hooks/useResolvedGodName';
 import { useGodNameSync } from '@/i18n/useGodNameSync';
 import { useDirectionSync } from '@/i18n/useDirection';
@@ -221,6 +222,8 @@ export function App() {
   // hook) so Michael doesn't boot against the current home while the user may be
   // about to switch to a different one.
   useHive(hiveOpened ? config : null);
+  // Room leads off screen and silent too long stop (ADR 0005); 0 minutes turns it off.
+  useRoomIdleShutdown(hiveOpened ? config?.roomIdleMinutes : 0);
 
   // Pre-warm a persistent terminal for every live agent so its output is
   // buffered from spawn. Switching agents then re-attaches an already-rendered

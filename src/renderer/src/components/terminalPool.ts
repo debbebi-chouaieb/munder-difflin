@@ -123,6 +123,11 @@ function notifyThemeChange(ptyId: string, theme: 'light' | 'dark'): void {
 
 /** Get (or lazily create) the persistent terminal for a pty. Theme/font are
  *  only used at creation; an attaching view re-applies its own afterwards. */
+/** Whether this pty's terminal is in the document now (some view shows it). */
+export function isTerminalOnScreen(ptyId: string): boolean {
+  return pool.get(ptyId)?.host.isConnected === true;
+}
+
 /** Lines a pooled terminal keeps. A room lead's pty id is its lead id. */
 export function terminalScrollback(ptyId: string): number {
   return isLeadAgentId(ptyId) ? ROOM_SCROLLBACK_LINES : 100000;
