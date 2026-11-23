@@ -194,7 +194,8 @@ test('trust state: none, trusted for the same repo, stale for another repo or no
   assert.equal(await wiring().w.trustState(project, 'D:/ws/App'), 'trusted');
   assert.equal(await wiring({ rootOut: `${'2'.repeat(40)}
 ` }).w.trustState(project, 'D:/ws/App'), 'stale');
-  assert.equal(await wiring({ rootOut: null }).w.trustState(project, 'D:/ws/App'), 'stale');
+  assert.equal(await wiring({ rootOut: null }).w.trustState(project, 'D:/ws/App'), 'unknown', 'git failed: nothing decided');
+  assert.equal(await wiring({ rootOut: '' }).w.trustState(project, 'D:/ws/App'), 'stale', 'no commit any more: another repo');
   assert.equal(await wiring({ rootOut: '' }).w.repoRoot('D:/ws/App'), null, 'a repo with no commit has no root');
 });
 
@@ -245,4 +246,13 @@ test('root commits: read from a real repo, with repo-local fsmonitor and hooks t
   git('commit', '-q', '--allow-empty', '--no-verify', '-m', 'root');
   const head = git('rev-parse', 'HEAD').trim();
   assert.equal(trustedRootFrom((await rootCommitsOutput(repo)) ?? ''), head);
+});
+
+test('revoke: a key in another letter case is dropped on Windows, and no temp file is left', { skip: process.platform !== 'win32' }, async (t) => {
+  const home = tempDir(t);
+  const file = path.join(home, '.claude.json');
+  fs.writeFileSync(file, JSON.stringify({ projects: { 'd:/WS/app/': { hasTrustDialogAccepted: true } } }));
+  assert.equal(await wiring({ home }).w.revokeTrust({ id: 'app', path: 'D:/ws/App' }, null), true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).projects['d:/WS/app/'], {});
+  assert.deepEqual(fs.readdirSync(home), ['.claude.json']);
 });

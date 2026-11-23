@@ -375,15 +375,25 @@ test('open: spawn failures map to codes; the raw error is only logged', async ()
   assert.ok(failed.calls.log.some((m) => m.includes('C:\\Users\\me\\secret')));
 });
 
-test('open: a "yes" whose spawn failed is undone, so the next open asks again', async () => {
+test('open: a "yes" whose spawn failed is undone, Claude folder trust included, so the next open asks again', async () => {
   const failed = deps({ project: { trusted: false }, spawnResult: { ok: false, error: 'boom' } });
   const h = createRoomHandlers(failed.d);
   assert.deepEqual(await h.openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null), { ok: false, error: 'spawn-failed' });
-  assert.deepEqual(failed.calls.patch, [['app', { trustedPath: 'D:/ws/App', trustedRoot: ROOT }], ['app', { trustedPath: null, trustedRoot: null }]]);
+  assert.deepEqual(failed.calls.patch, [['app', { trustedPath: 'D:/ws/App', trustedRoot: ROOT }]]);
+  assert.deepEqual(failed.calls.revoke, [['app', 'D:/ws/App-real']]);
 
   const already = deps({ spawnResult: { ok: false, error: 'boom' } });
   await createRoomHandlers(already.d).openTerminal('app', null, null);
   assert.deepEqual(already.calls.patch, [], 'trust given earlier is not touched by a failed spawn');
+  assert.deepEqual(already.calls.revoke, []);
+});
+
+test('trust: a git failure asks again but keeps the stored trust', async () => {
+  const { d, calls } = deps({ trustState: 'unknown' });
+  const res = await createRoomHandlers(d).openTerminal('app', null, null);
+  assert.equal(res.error, 'needs-trust');
+  assert.deepEqual(calls.revoke, []);
+  assert.ok(calls.log.some((m) => m.includes('trust kept')));
 });
 
 test('open: a throwing spawn is reported, and the next click can try again', async () => {

@@ -51,6 +51,13 @@ The Rooms-e review and security audit of ADR 0005 found four gaps in how a room 
 ## Consequences
 - Every project trusted before this change asks once more.
 - A repo with no commit yet never runs a trusted lead.
+- A git failure (timeout, `safe.directory`) is not a different repo: the open asks again and keeps the stored
+  trust; a lead spawned meanwhile runs untrusted.
+- `~/.claude.json` is replaced with a temp file and a rename, and keys are matched with Windows letter case
+  ignored. A claude that writes the file between our read and the rename still loses that one write.
+- Accepted residual for the local ticket file on Windows: there is no `O_NOFOLLOW`, so a link swapped in
+  between the open and the real-path check could be read through the handle. Comparing the handle's
+  `dev`/`ino` with the walk is not reliable on Windows.
 - A fork of the same project shares its root commit and stays trusted: the binding tells unrelated repos apart,
   not versions of one repo.
 - Each trusted open and each lead spawn runs one `git rev-list --max-parents=0 HEAD`, bounded by a timeout.

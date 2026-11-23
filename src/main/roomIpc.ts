@@ -36,7 +36,7 @@ export interface RoomDeps {
   /** Saves stored project fields; false when the write failed. */
   patchProject: (projectId: string, patch: { leadAgentId?: string; trustedPath?: string | null; trustedRoot?: string | null }) => boolean;
   /** Whether stored trust still holds for the repo now in `cwd` (ADR 0007). */
-  trustState: (project: Project, cwd: string) => Promise<'trusted' | 'stale' | 'none'>;
+  trustState: (project: Project, cwd: string) => Promise<'trusted' | 'stale' | 'unknown' | 'none'>;
   /** Drops the project's trust and Claude's folder trust; false when a part was not saved. */
   revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
   /** The stored form of the repo's root commits in `cwd`, or null (no git, no commit). */
@@ -76,6 +76,8 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       deps.log(`[room] ${project.id} holds another repo than the one trusted; trust dropped`);
       if (!(await deps.revokeTrust(project, cwd))) deps.log(`[room] trust for ${project.id} not fully dropped`);
     }
+    // Git could not be asked: keep the stored trust, but do not use it for this open.
+    if (state === 'unknown') deps.log(`[room] could not read the root commit of ${project.id}; asking again, trust kept`);
     // Ask when no answer was given, and again when the project now points at a
     // different folder than the one the person said "yes" to.
     if (state !== 'trusted' && (request.trust === null || (request.trust === 'yes' && request.trustPath !== project.path))) {
@@ -101,7 +103,8 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     if (!res.ok) {
       deps.log(`[room] lead spawn failed for ${project.id}: ${res.error ?? 'no detail'}`);
       // A "yes" to an open that never ran is not kept: the next open asks again.
-      if (grantedNow && trusted && !deps.patchProject(project.id, { trustedPath: null, trustedRoot: null })) {
+      // The spawn may already have pre-accepted Claude's folder trust, so drop that too.
+      if (grantedNow && trusted && !(await deps.revokeTrust(project, cwd))) {
         deps.log(`[room] could not undo trust for ${project.id} after a failed spawn`);
       }
       return { ok: false, error: res.resumeNotFound ? 'session-not-found' : 'spawn-failed' };

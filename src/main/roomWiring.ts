@@ -3,7 +3,7 @@
 // Kept out of index.ts so it can be unit tested with a temp home folder.
 
 import { join } from 'node:path';
-import { lstat, readFile, stat, writeFile } from 'node:fs/promises';
+import { lstat, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import type { WebContents } from 'electron';
 import { samePath, trustedRootFrom, type Project, type StoredProjectPatch } from '../shared/project';
 import { leadAgentIdFor } from '../shared/roomLead';
@@ -24,8 +24,11 @@ export interface RoomWiringDeps {
   log: (line: string) => void;
 }
 
-/** `none`: never trusted; `stale`: trusted, but the folder now holds another repo (or none). */
-export type TrustState = 'trusted' | 'stale' | 'none';
+/**
+ * `none`: never trusted; `stale`: trusted, but the folder now holds another repo
+ * (or one with no commit); `unknown`: git could not be asked, so nothing is decided.
+ */
+export type TrustState = 'trusted' | 'stale' | 'unknown' | 'none';
 
 export interface RoomWiring {
   /** Parsed ~/.claude.json, or null when it is missing, too big or unreadable (then Claude will ask). */
@@ -95,7 +98,17 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
     return out === null ? null : trustedRootFrom(out);
   };
 
-  /** Drops `hasTrustDialogAccepted` from both spellings of `folder`'s key; parents were never written by the app. */
+  /** Claude's key for a folder in the form used to compare keys: forward slashes, no trailing one. */
+  const folderKey = (folder: string): string => {
+    const key = folder.replace(/\\/g, '/').replace(/\/+$/, '');
+    return deps.caseInsensitivePaths ? key.toLowerCase() : key;
+  };
+
+  /**
+   * Drops `hasTrustDialogAccepted` from every key that names `folder` (any slash
+   * or, on Windows, letter case); parents were never written by the app. The
+   * file is replaced by a rename, so a running claude never reads it half written.
+   */
   const forgetClaudeFolderTrust = async (folder: string): Promise<boolean> => {
     const file = join(deps.homedir(), '.claude.json');
     try {
@@ -110,15 +123,23 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
       }
       const projects = (config as { projects?: unknown }).projects;
       if (!projects || typeof projects !== 'object') return true;
+      const wanted = folderKey(folder);
       let changed = false;
-      for (const key of new Set([folder.replace(/\\/g, '/'), folder])) {
-        const entry = (projects as Record<string, unknown>)[key];
-        if (entry && typeof entry === 'object' && 'hasTrustDialogAccepted' in entry) {
+      for (const [key, entry] of Object.entries(projects as Record<string, unknown>)) {
+        if (folderKey(key) === wanted && entry && typeof entry === 'object' && 'hasTrustDialogAccepted' in entry) {
           delete (entry as Record<string, unknown>).hasTrustDialogAccepted;
           changed = true;
         }
       }
-      if (changed) await writeFile(file, JSON.stringify(config, null, 2), 'utf8');
+      if (!changed) return true;
+      const temp = `${file}.${process.pid}.tmp`;
+      await writeFile(temp, JSON.stringify(config, null, 2), 'utf8');
+      try {
+        await rename(temp, file);
+      } catch (e) {
+        await rm(temp, { force: true }).catch(() => undefined);
+        throw e;
+      }
       return true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return true;
@@ -166,8 +187,9 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
 
     async trustState(project, cwd) {
       if (!project.trusted) return 'none';
-      const root = await repoRoot(cwd);
-      return root !== null && root === project.trustedRoot ? 'trusted' : 'stale';
+      const out = await deps.rootCommitsOutput(cwd);
+      if (out === null) return 'unknown';
+      return trustedRootFrom(out) === project.trustedRoot ? 'trusted' : 'stale';
     },
 
     async revokeTrust(project, cwd) {
