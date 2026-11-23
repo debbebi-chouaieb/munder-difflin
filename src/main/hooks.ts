@@ -50,6 +50,8 @@ interface HookPayload {
   output?: number;
   cache_read?: number;
   cache_creation?: number;
+  /** HIVE_SPAWN_TOKEN of the agent's current spawn, set by the cth-hook shim (ADR 0008). */
+  spawn_token?: string;
 }
 
 /** Live health of the hook socket — the ONE endpoint every lifecycle hook,
@@ -146,10 +148,11 @@ export class HookServer {
     /** Standing goal text for an agent (from the durable roster). Optional so
      *  tests can omit it; when set, injected at session start and when changed. */
     private getStandingGoal?: (agentId: string) => string | null,
-    /** Optional observer of every hook boundary (agentId, event, message). The
-     *  worker inbox-wake watchdog (workerWake.ts) feeds on this to learn when an
-     *  agent is parked on a permission/HITL prompt so it never types into it. */
-    private onEvent?: (agentId: string | undefined, event: string, message: string | undefined) => void
+    /** Optional observer of every hook boundary (agentId, event, message, spawn
+     *  token). The worker inbox-wake watchdog (workerWake.ts) feeds on this to learn
+     *  when an agent is parked on a permission/HITL prompt so it never types into
+     *  it; the trust prompt gate checks the spawn token (ADR 0008). */
+    private onEvent?: (agentId: string | undefined, event: string, message: string | undefined, spawnToken: string | undefined) => void
   ) {}
 
   /** Bind the hook socket. Asynchronous and safe to call repeatedly — a
@@ -383,7 +386,7 @@ export class HookServer {
   private handle(p: HookPayload): unknown {
     const agentId = p.agent_id ?? undefined;
     const event = p.hook_event_name ?? 'Unknown';
-    this.onEvent?.(agentId, event, p.message);
+    this.onEvent?.(agentId, event, p.message, typeof p.spawn_token === 'string' ? p.spawn_token : undefined);
     if (agentId && typeof p.transcript_path === 'string' && p.transcript_path) {
       this.transcriptPaths.set(agentId, p.transcript_path);
     }

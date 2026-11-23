@@ -3119,6 +3119,8 @@ process.stdin.on('end', () => {
   let payload = {};
   try { payload = JSON.parse(data || '{}'); } catch (_) {}
   if (!payload.agent_id) payload.agent_id = process.env.AGENT_ID || null;
+  // Proves the event comes from the current spawn of this agent (ADR 0008).
+  if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
   const sock = process.env.HIVE_SOCK;
   if (isStatus) {
     // Status-line mode: Claude Code pipes the session status JSON (incl.

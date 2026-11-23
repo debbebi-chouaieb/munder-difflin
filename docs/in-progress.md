@@ -7,7 +7,8 @@ Update this file whenever a work item starts, finishes, or a new gap appears.
 munder-difflin has no ZetaHub project, so its work is tracked here as local tickets. The `backlog` skill reads
 only this section. One bullet per item: what, then (source, date). Remove a bullet when it is done.
 
-- Rooms hook token (needs an ADR, changes the hook payload): a late hook from a killed lead can release the trust gate of its next spawn (the gate is keyed by agent id only), and any local process that reaches the hook socket can send `agent_id=lead--x` to release a gate. A per-spawn secret in the agent env, echoed in the hook payload, closes both (Rooms-e audit, 2026-11-23)
+- Hook token on every hook (ADR 0008 follow-up): only the trust prompt gate checks `spawn_token`; pause, halt, the breaker and the inbox still trust the payload's `agent_id`, and the agy, Gemini, Grok and proxy shims send no token (ADR 0008, 2026-11-23)
+- Hook agent id inside subagents: the cth-hook shim keeps an `agent_id` Claude already set. If current Claude Code tags hooks fired inside a subagent with the subagent's id, those events (and SubagentStop's idle handling in hooks.ts and useHive.ts) do not reach the lead's state; check what Claude sends before changing the rule (ADR 0008 audit, 2026-11-23)
 - Rooms trust revoke UI: add "Forget trust" to the room panel; it calls `roomWiring.revokeTrust`, which already drops stored trust and Claude's folder trust (ADR 0007, 2026-11-23)
 - Rooms small: the room panel and the board-count hook both read tickets on window focus (one extra read); the `hive:agentSpawned` payload is built in roomWiring.announceLead and three spawn-then-announce copies in index.ts: one builder in shared/roomLead.ts (Rooms-e review, 2026-11-23)
 - Rooms limits UI: `roomPtyCap` and `roomIdleMinutes` are config-file only; add them to Settings if people need to change them. The cap counts least recently used by last room open or write, both reset on app restart (Rooms-d, 2026-11-23)
@@ -18,7 +19,7 @@ only this section. One bullet per item: what, then (source, date). Remove a bull
 - Rooms refresh (deferred): in-app ZetaHub refresh. `runHiddenClaude` uses bypassPermissions while a sync reads user-written ticket text; needs a restricted tool list or a direct client first (pm review, 2026-11-20)
 - Phase 4: parallel work enforced in main; adds `projectId`/`scope` on agents. The lead conversation part moved to Rooms-b/c (ADR 0004, 2026-11-20)
 - Phase 4 also: project picker in AddAgentModal (projects list + global option); explicit projectId so agents in worktrees count in their room (deferred from Phase 2, 2026-11-19)
-- Phase 6: Android devices from `adb devices` in the office and on tasks (ADR 0008 to write at the phase brief; 0005 to 0007 went to the rooms, 2026-11-23)
+- Phase 6: Android devices from `adb devices` in the office and on tasks (its ADR takes the next free number at the phase brief; 0005 to 0008 went to the rooms, 2026-11-23)
 - Privacy: upstream click-through links in Settings and the update toast still point at the upstream project. Migration of profiles that already saved `true` skipped by decision (review, 2026-11-19)
 - 7 focused tests fail on upstream HEAD too (agent-token-cap, arabic-terminal, hire-import, model-catalog-remote, provider-config, release-notes, telemetry-message-count); 16 more fail on this Windows machine for symlink EPERM and socket EACCES (2026-11-19)
 - Source-regex tests that hard-code a bare LF (e.g. telemetry-message-count steer and composer) pass or fail with the checkout's line endings (core.autocrlf=true gives CRLF); match an optional CR before each LF, or add a `.gitattributes` eol rule (2026-11-20)

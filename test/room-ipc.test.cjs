@@ -170,10 +170,45 @@ test('mcp probe: only "not found" everywhere means none; a parent file, a link o
 test('trust prompt gate: held until released', () => {
   const gate = new TrustPromptGate();
   assert.equal(gate.blocks('lead--app'), false);
-  gate.hold('lead--app');
+  gate.hold('lead--app', 'tok-1');
   assert.equal(gate.blocks('lead--app'), true);
-  gate.release('lead--app');
+  gate.release('lead--app', 'tok-1');
   assert.equal(gate.blocks('lead--app'), false);
+});
+
+test('trust prompt gate: a closing terminal releases only its own spawn', () => {
+  const gate = new TrustPromptGate();
+  gate.hold('lead--app', 'new');
+  gate.release('lead--app', 'old'); // the previous spawn's terminal closes late
+  assert.equal(gate.blocks('lead--app'), true);
+  gate.release('lead--app', 'new');
+  assert.equal(gate.blocks('lead--app'), false);
+});
+
+test('trust prompt gate: a turn releases only with the current spawn token (ADR 0008)', () => {
+  const gate = new TrustPromptGate();
+  gate.hold('lead--app', 'a'.repeat(64));
+  // Forged or tokenless payloads, and a token of the wrong length, keep it held.
+  for (const bad of [undefined, null, 42, '', 'b'.repeat(64), 'a'.repeat(63), 'a'.repeat(65)]) {
+    assert.equal(gate.releaseOnTurn('lead--app', bad), false, String(bad));
+    assert.equal(gate.blocks('lead--app'), true, String(bad));
+  }
+  // Another agent's id with the right token releases nothing.
+  assert.equal(gate.releaseOnTurn('lead--other', 'a'.repeat(64)), false);
+  assert.equal(gate.blocks('lead--app'), true);
+  assert.equal(gate.releaseOnTurn('lead--app', 'a'.repeat(64)), true);
+  assert.equal(gate.blocks('lead--app'), false);
+  assert.equal(gate.releaseOnTurn('lead--app', 'a'.repeat(64)), false, 'not held any more');
+});
+
+test('trust prompt gate: a late turn from the previous spawn does not release its replacement', () => {
+  const gate = new TrustPromptGate();
+  gate.hold('lead--app', 'old');
+  gate.release('lead--app', 'old'); // the old terminal closed
+  gate.hold('lead--app', 'new');
+  assert.equal(gate.releaseOnTurn('lead--app', 'old'), false);
+  assert.equal(gate.blocks('lead--app'), true);
+  assert.equal(gate.releaseOnTurn('lead--app', 'new'), true);
 });
 
 test('open request parsing', () => {
@@ -481,9 +516,9 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /argsWithAutoModeFlag\(opts\.args \?\? \[\], spawnPosture\(opts\.untrusted === true, !!cfg\.autoMode\)\.autoMode, provider\)/);
   // The gate: held after an untrusted spawn, released by a real turn and by teardown, read by both automations.
   // Held only where Claude will show a prompt: not in a folder Claude already trusts.
-  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);[\s\S]*?const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && guardTrustPrompt\) trustPromptGate\.hold\(leadId\);/);
-  assert.match(src, /if \(agentId && hookProvesTurn\(event\)\) trustPromptGate\.release\(agentId\);/);
-  assert.match(src, /trustPromptGate\.release\(agentId \?\? id\);/);
+  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);[\s\S]*?const spawnToken = guardTrustPrompt \? randomBytes\(32\)\.toString\('hex'\) : null;\s*if \(spawnToken\) opts\.env = \{ \.\.\.\(opts\.env \?\? \{\}\), HIVE_SPAWN_TOKEN: spawnToken \};\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && spawnToken\) \{\s*trustPromptGate\.hold\(leadId, spawnToken\);\s*spawnTokenByPty\.set\(opts\.id, spawnToken\);/);
+  assert.match(src, /\(agentId, event, message, spawnToken\) => \{\s*if \(agentId && hookProvesTurn\(event\)\) trustPromptGate\.releaseOnTurn\(agentId, spawnToken\);/);
+  assert.match(src, /const spawnToken = spawnTokenByPty\.get\(id\);\s*spawnTokenByPty\.delete\(id\);\s*if \(spawnToken\) trustPromptGate\.release\(agentId \?\? id, spawnToken\);/);
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);
   assert.match(src, /trustPending: trustPromptGate\.blocks\(agentId\)/);
   assert.match(src, /const roomHandlers = createRoomHandlers\(\{/);

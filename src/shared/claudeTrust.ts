@@ -97,22 +97,41 @@ export function hookProvesTurn(event: string | undefined): boolean {
 
 /**
  * Agents whose terminal may be sitting at Claude's trust prompt. Automation must
- * not type into them: the prompt's default answer is "yes". The first hook event
- * that proves a turn ran releases the agent; so does its terminal closing.
+ * not type into them: the prompt's default answer is "yes". A hook event that
+ * proves a turn ran releases the agent only when it carries the token of the
+ * current spawn (ADR 0008), so a late hook from a killed lead or a forged payload
+ * cannot. The terminal of that same spawn closing releases it too.
  */
 export class TrustPromptGate {
-  private readonly waiting = new Set<string>();
+  private readonly waiting = new Map<string, string>();
 
-  hold(agentId: string): void {
-    this.waiting.add(agentId);
+  hold(agentId: string, spawnToken: string): void {
+    this.waiting.set(agentId, spawnToken);
   }
 
-  /** A hook event proving a turn ran, or the terminal closing, releases the agent. */
-  release(agentId: string): void {
+  /** A turn from the current spawn releases the agent. Returns whether it did. */
+  releaseOnTurn(agentId: string, spawnToken: unknown): boolean {
+    const expected = this.waiting.get(agentId);
+    if (expected === undefined || typeof spawnToken !== 'string' || !sameSecret(expected, spawnToken)) return false;
     this.waiting.delete(agentId);
+    return true;
+  }
+
+  /** The terminal of the spawn holding `spawnToken` closed. */
+  release(agentId: string, spawnToken: string): void {
+    const expected = this.waiting.get(agentId);
+    if (expected !== undefined && sameSecret(expected, spawnToken)) this.waiting.delete(agentId);
   }
 
   blocks(agentId: string): boolean {
     return this.waiting.has(agentId);
   }
+}
+
+/** Constant-time string comparison; this module stays free of Node imports. */
+function sameSecret(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
 }

@@ -317,6 +317,8 @@ const workerWake = new WorkerWakeWatchdog();
 // Untrusted room leads may sit at Claude's trust prompt, whose default is "yes":
 // no automation types into them until a hook event proves Claude is past it.
 const trustPromptGate = new TrustPromptGate();
+// The gate token of each guarded spawn, by PTY id: a closing terminal releases only its own spawn (ADR 0008).
+const spawnTokenByPty = new Map<string, string>();
 const hookServer = new HookServer(
   hive,
   () => liveWebContents(),
@@ -324,8 +326,8 @@ const hookServer = new HookServer(
   control,
   breaker,
   standingGoalFromRoster,
-  (agentId, event, message) => {
-    if (agentId && hookProvesTurn(event)) trustPromptGate.release(agentId);
+  (agentId, event, message, spawnToken) => {
+    if (agentId && hookProvesTurn(event)) trustPromptGate.releaseOnTurn(agentId, spawnToken);
     workerWake.noteHook(agentId, event, message);
   }
 );
@@ -471,7 +473,9 @@ function teardownPty(id: string): void {
   // 1) Archive the agent — retained + flagged; only live-PTY agents are active.
   const agentId = ptyToAgent.get(id);
   // Held by agent id, or by pty id for a spawn without hive meta.
-  trustPromptGate.release(agentId ?? id);
+  const spawnToken = spawnTokenByPty.get(id);
+  spawnTokenByPty.delete(id);
+  if (spawnToken) trustPromptGate.release(agentId ?? id, spawnToken);
   if (agentId) {
     ptyToAgent.delete(id);
     // Drop watchdog state so a dead agent can't get nudged or leak its grace.
@@ -3069,8 +3073,14 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   if (trustedLeadCwd && opts.untrusted !== true && !(await roomWiring.stillLeadFolder(opts.cwd, trustedLeadCwd))) {
     return { ok: false, error: 'the project folder changed before the lead started' };
   }
+  // Only a hook carrying this spawn's token can release its gate (ADR 0008).
+  const spawnToken = guardTrustPrompt ? randomBytes(32).toString('hex') : null;
+  if (spawnToken) opts.env = { ...(opts.env ?? {}), HIVE_SPAWN_TOKEN: spawnToken };
   const res = ptyManager.spawn(opts, owner);
-  if (res.ok && guardTrustPrompt) trustPromptGate.hold(leadId);
+  if (res.ok && spawnToken) {
+    trustPromptGate.hold(leadId, spawnToken);
+    spawnTokenByPty.set(opts.id, spawnToken);
+  }
   if (res.ok) analytics.track('agent_spawned', { provider });
   else analytics.track('agent_spawn_failed', { provider, reason: spawnFailReason(res.error) });
   syncKeepAwake(); // arm the power-save blocker while ≥1 agent PTY is alive (#18)
