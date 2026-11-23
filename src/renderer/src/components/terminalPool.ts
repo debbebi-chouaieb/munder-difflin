@@ -39,6 +39,8 @@ import {
   type TerminalAutomationBlock
 } from './terminalAutomation';
 import { sanitizeTerminalSelection } from './terminalSelection';
+import { isLeadAgentId } from '@shared/roomLead';
+import { ROOM_SCROLLBACK_LINES } from '@shared/roomLimits';
 import { terminalKeySequence } from './terminalKeys';
 import '@xterm/xterm/css/xterm.css';
 
@@ -121,6 +123,11 @@ function notifyThemeChange(ptyId: string, theme: 'light' | 'dark'): void {
 
 /** Get (or lazily create) the persistent terminal for a pty. Theme/font are
  *  only used at creation; an attaching view re-applies its own afterwards. */
+/** Lines a pooled terminal keeps. A room lead's pty id is its lead id. */
+export function terminalScrollback(ptyId: string): number {
+  return isLeadAgentId(ptyId) ? ROOM_SCROLLBACK_LINES : 100000;
+}
+
 export function acquireTerminal(ptyId: string, theme?: ThemeMap, fontSize = 14): TerminalEntry {
   const existing = pool.get(ptyId);
   if (existing) return existing;
@@ -138,7 +145,8 @@ export function acquireTerminal(ptyId: string, theme?: ThemeMap, fontSize = 14):
     lineHeight: 1.0,
     cursorBlink: true,
     cursorStyle: 'block',
-    scrollback: 100000,
+    // Room leads are capped by count and live long (ADR 0005): a smaller buffer each.
+    scrollback: terminalScrollback(ptyId),
     // Guarantee legible text no matter what colors a running program sets.
     // When a program paints a coloured cell background (e.g. a git-diff add line
     // with a green bg, or a yellow-highlighted line) while leaving the default

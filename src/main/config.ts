@@ -189,6 +189,10 @@ export interface HarnessConfig {
   /** Workspace root (ADR 0001): each top-level git folder is a project. Null until
    *  the user picks it in the project sidebar (projects:pickWorkspace). */
   workspaceRoot?: string | null;
+  /** Live room lead terminals allowed at once (ADR 0005); read through `roomPtyCap()`, default 3. */
+  roomPtyCap?: number;
+  /** Minutes before a hidden, silent room lead stops (ADR 0005); read through `roomIdleMinutes()`, default 30, 0 = never. */
+  roomIdleMinutes?: number;
   /** Folders the user registered during onboarding (used as quick-picks). */
   registeredRepos: string[];
   /** When true, new agents are spawned with --permission-mode bypassPermissions. */

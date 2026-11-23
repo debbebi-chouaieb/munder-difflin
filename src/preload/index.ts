@@ -271,6 +271,9 @@ export interface HarnessConfig {
   recentHives?: string[];
   /** Workspace root for the project sidebar. Mirrors src/main/config.ts. */
   workspaceRoot?: string | null;
+  /** Room lead terminal limits (ADR 0005). Mirrors src/main/config.ts; read through src/shared/roomLimits.ts. */
+  roomPtyCap?: number;
+  roomIdleMinutes?: number;
   registeredRepos: string[];
   autoMode: boolean;
   defaultCommand: string;
