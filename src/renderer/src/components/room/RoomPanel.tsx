@@ -16,14 +16,14 @@ import { boardCounts } from '@/store/roomBoardCounts';
 import { RoomSessionList } from './RoomSessionList';
 import { RoomTaskColumns } from './RoomTaskColumns';
 import { RoomSplitter } from './RoomSplitter';
-import { RoomLargeSessionDialog, RoomTrustDialog } from './RoomDialogs';
+import { RoomCapDialog, RoomLargeSessionDialog, RoomTrustDialog } from './RoomDialogs';
 import { LeadTerminal } from './LeadTerminal';
 import { muted, warning } from './roomStyles';
 import {
   afterLargeAnswer, nextRoomTopHeight, openStep, readErrorKey, roomErrorKey, showZetahubSetting, withTrust, type OpenStep
 } from './roomPanelModel';
 
-type Question = Extract<OpenStep, { kind: 'ask-trust' | 'confirm-large' }>;
+type Question = Extract<OpenStep, { kind: 'ask-trust' | 'confirm-large' | 'confirm-cap' }>;
 
 const logError = (line: string): void => console.error(line);
 
@@ -155,6 +155,29 @@ export function RoomPanel({ projectId }: { projectId: string }) {
 
   const answer = (next: OpenTerminalRequest) => { setQuestion(null); void open(next); };
 
+  /** Stops the offered lead (and drops its pooled terminal), then retries the same open. */
+  const stopOtherThenOpen = async (closeProjectId: string, request: OpenTerminalRequest) => {
+    setQuestion(null);
+    setBusy(true);
+    try {
+      const other = useProjects.getState().snapshot.projects.find((p) => p.id === closeProjectId);
+      const otherPtyId = other ? useStore.getState().agents.find((a) => a.id === leadAgentIdFor(other))?.ptyId : undefined;
+      const res = await window.cth.roomCloseTerminal(closeProjectId);
+      if (!res.ok) {
+        setNotice({ key: roomErrorKey(res.error), warn: true });
+        return;
+      }
+      if (otherPtyId) disposeTerminal(otherPtyId);
+    } catch (e) {
+      logError(`[room] stop of ${closeProjectId} for a new terminal failed: ${e instanceof Error ? e.message : String(e)}`);
+      setNotice({ key: roomErrorKey('stop-failed'), warn: true });
+      return;
+    } finally {
+      setBusy(false);
+    }
+    await open(request);
+  };
+
   const stopButton = leadRunning && (
     <PixelButton size="sm" variant="ghost" disabled={busy} onClick={() => void stop()}>{t('room.terminal.stop')}</PixelButton>
   );
@@ -230,6 +253,14 @@ export function RoomPanel({ projectId }: { projectId: string }) {
           path={question.path}
           claudeTrusts={question.claudeTrusts}
           onAnswer={(a) => answer(withTrust(question.request, a, question.path))}
+          onCancel={() => setQuestion(null)}
+        />
+      )}
+      {question?.kind === 'confirm-cap' && (
+        <RoomCapDialog
+          cap={question.cap}
+          closeName={question.closeName}
+          onConfirm={() => void stopOtherThenOpen(question.closeProjectId, question.request)}
           onCancel={() => setQuestion(null)}
         />
       )}

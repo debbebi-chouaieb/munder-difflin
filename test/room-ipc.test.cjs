@@ -24,7 +24,7 @@ const PROJECT = {
 };
 
 function deps(over = {}) {
-  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [] };
+  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [], touch: [] };
   const running = new Set(over.running ?? []);
   const sessions = {
     [ABC]: { id: ABC, large: false, contextTokens: 10 },
@@ -46,6 +46,10 @@ function deps(over = {}) {
     repoRoot: async () => ('repoRoot' in over ? over.repoRoot : ROOT),
     killLead: (id) => { calls.kill.push(id); if (over.killFails) return { ok: false, error: 'EPERM' }; running.delete(id); return { ok: true }; },
     archiveLead: (id) => { calls.archive.push(id); },
+    liveLeadIds: () => [...running].filter((id) => id.startsWith('lead--')),
+    roomPtyCap: () => over.cap ?? 3,
+    touchLead: (id) => { calls.touch.push(id); },
+    leadLastUsed: (id) => over.lastUsed?.[id] ?? 0,
     log: (m) => calls.log.push(m)
   };
   return { d, calls };
@@ -488,4 +492,52 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(hive, /if \(control\?\.trustPending\) return \{ sent: false \};/);
   // The seed prompt waits for the gate too, and an unknown gate state counts as closed.
   assert.match(hive, /live\.status === 'blocked' \|\| control\?\.trustPending !== false\) \{\s*seeded\.current\.delete\(a\.id\);/);
+});
+
+// ─── room terminal cap (ADR 0005, Rooms-d) ─────────────────────────────────
+
+const OTHERS = [
+  { ...PROJECT, id: 'web', name: 'Web', path: 'D:/ws/Web' },
+  { ...PROJECT, id: 'api', name: 'Api', path: 'D:/ws/Api' }
+];
+
+test('cap: below the cap the lead opens and counts as used', async () => {
+  const { d, calls } = deps({ cap: 2, running: ['lead--web'] });
+  d.projects = async () => [PROJECT, ...OTHERS];
+  const res = await createRoomHandlers(d).openTerminal('app', null, null);
+  assert.equal(res.ok, true);
+  assert.deepEqual(calls.touch, ['lead--app']);
+});
+
+test('cap: at the cap the least recently used lead is offered, nothing spawns', async () => {
+  const { d, calls } = deps({ cap: 2, running: ['lead--web', 'lead--api'], lastUsed: { 'lead--web': 200, 'lead--api': 100 } });
+  d.projects = async () => [PROJECT, ...OTHERS];
+  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', null, null),
+    { ok: false, error: 'room-cap', cap: 2, closeProjectId: 'api', closeName: 'Api' });
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('cap: a lead whose project is gone does not count; a running lead re-opens at the cap', async () => {
+  const { d, calls } = deps({ cap: 1, running: ['lead--gone'] });
+  d.projects = async () => [PROJECT, ...OTHERS];
+  assert.equal((await createRoomHandlers(d).openTerminal('app', null, null)).ok, true);
+  const full = deps({ cap: 1, running: ['lead--app', 'lead--web'] });
+  full.d.projects = async () => [PROJECT, ...OTHERS];
+  const res = await createRoomHandlers(full.d).openTerminal('app', null, null);
+  assert.equal(res.alreadyRunning, true);
+  assert.deepEqual(full.calls.touch, ['lead--app']);
+  assert.equal(calls.log.some((m) => m.includes('offering')), false);
+});
+
+test('cap: opens still in flight count, and with no live lead to offer the answer is busy', async () => {
+  const { d } = deps({ cap: 1 });
+  d.projects = async () => [PROJECT, ...OTHERS];
+  let release;
+  d.spawnLead = (opts) => new Promise((resolve) => { release = () => resolve({ ok: true }); });
+  const h = createRoomHandlers(d);
+  const first = h.openTerminal('web', null, null);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(await h.openTerminal('app', null, null), { ok: false, error: 'busy' });
+  release();
+  assert.equal((await first).ok, true);
 });

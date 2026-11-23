@@ -24,12 +24,18 @@ export const ROOM_ERROR_CODES = [
   'spawn-failed',
   'stop-failed',
   'read-failed',
-  'busy'
+  'busy',
+  'room-cap'
 ] as const;
 export type RoomErrorCode = (typeof ROOM_ERROR_CODES)[number];
 
 export type RoomFailure =
-  | { ok: false; error: Exclude<RoomErrorCode, 'large-session' | 'needs-trust'> }
+  | { ok: false; error: Exclude<RoomErrorCode, 'large-session' | 'needs-trust' | 'room-cap'> }
+  /**
+   * `roomPtyCap` lead terminals already run (ADR 0005). `closeProjectId` and
+   * `closeName`: the least recently used one, which the panel offers to stop.
+   */
+  | { ok: false; error: 'room-cap'; cap: number; closeProjectId: string; closeName: string }
   | { ok: false; error: 'large-session'; contextTokens: number | null }
   /**
    * `path`: the folder "Trust" would store; the dialog shows it and a "yes" sends it

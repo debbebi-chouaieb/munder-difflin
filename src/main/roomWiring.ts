@@ -14,6 +14,7 @@ export const CLAUDE_CONFIG_MAX_BYTES = 32 * 1024 * 1024;
 
 export interface RoomWiringDeps {
   homedir: () => string;
+  now?: () => number;
   caseInsensitivePaths: boolean;
   workspaceRoot: () => string | null | undefined;
   liveWebContents: () => WebContents | null;
@@ -57,6 +58,10 @@ export interface RoomWiring {
    * the next lead asks again. False when any part could not be saved.
    */
   revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  /** Notes that the person used this lead's terminal now; the room cap stops the least recently used. */
+  touchLead: (agentId: string) => void;
+  /** Epoch ms of the last use, or 0 when never seen since the app started. */
+  leadLastUsed: (agentId: string) => number;
   /** Records the window that opened a lead, so its archive goes where its card was made. */
   ownLead: (agentId: string, owner: WebContents) => void;
   leadWindow: (agentId: string) => WebContents | null;
@@ -67,6 +72,9 @@ export interface RoomWiring {
 
 export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
   const leadOwners = new Map<string, WebContents>();
+  // One entry per lead id that was ever used, so bounded by the project count.
+  const leadUsedAt = new Map<string, number>();
+  const now = deps.now ?? Date.now;
 
   const readClaudeConfig = async (): Promise<unknown> => {
     const file = join(deps.homedir(), '.claude.json');
@@ -200,6 +208,14 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
       let claudeForgot = true;
       for (const folder of folders) claudeForgot = (await forgetClaudeFolderTrust(folder)) && claudeForgot;
       return saved && claudeForgot;
+    },
+
+    touchLead(agentId) {
+      leadUsedAt.set(agentId, now());
+    },
+
+    leadLastUsed(agentId) {
+      return leadUsedAt.get(agentId) ?? 0;
     },
 
     ownLead(agentId, owner) {

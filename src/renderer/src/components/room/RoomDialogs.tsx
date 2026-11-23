@@ -142,3 +142,27 @@ export function RoomLargeSessionDialog({ contextTokens, onAnswer, onCancel }: {
     </Dialog>
   );
 }
+
+/** The room terminal cap is reached (ADR 0005): stop the least recently used lead to open this one. */
+export function RoomCapDialog({ cap, closeName, onConfirm, onCancel }: {
+  cap: number;
+  closeName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Dialog
+      title={t('room.cap.title')}
+      onCancel={onCancel}
+      actions={(
+        <>
+          <PixelButton variant="ghost" onClick={onCancel}>{t('room.cap.cancel')}</PixelButton>
+          <PixelButton variant="primary" onClick={onConfirm}>{t('room.cap.confirm')}</PixelButton>
+        </>
+      )}
+    >
+      <p style={{ margin: 0 }}>{t('room.cap.body', { cap, name: closeName })}</p>
+    </Dialog>
+  );
+}

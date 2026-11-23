@@ -256,3 +256,19 @@ test('revoke: a key in another letter case is dropped on Windows, and no temp fi
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).projects['d:/WS/app/'], {});
   assert.deepEqual(fs.readdirSync(home), ['.claude.json']);
 });
+
+test('lead use: last use per lead, 0 when never seen; typing into a lead counts as use', () => {
+  let now = 1000;
+  const w = createRoomWiring({
+    homedir: () => os.tmpdir(), caseInsensitivePaths: false, workspaceRoot: () => null, liveWebContents: () => null,
+    rootCommitsOutput: async () => null, patchProject: () => true, log: () => {}, now: () => now
+  });
+  assert.equal(w.leadLastUsed('lead--app'), 0);
+  w.touchLead('lead--app');
+  now = 5000;
+  w.touchLead('lead--web');
+  assert.equal(w.leadLastUsed('lead--app'), 1000);
+  assert.equal(w.leadLastUsed('lead--web'), 5000);
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
+  assert.match(src, /ipcMain\.handle\('pty:write'[^]*?if \(isLeadAgentId\(id\)\) roomWiring\.touchLead\(id\);[^]*?return ptyManager\.write\(id, data\);/);
+});

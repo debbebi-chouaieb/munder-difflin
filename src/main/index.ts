@@ -37,7 +37,8 @@ import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessio
 import { SessionLister } from './projectSessions';
 import { readRoomTickets } from './projectTickets';
 import { createRoomHandlers, registerRoomIpc } from './roomIpc';
-import { leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
+import { isLeadAgentId, leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
+import { roomPtyCap } from '../shared/roomLimits';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
 import type { Project, StoredProjectPatch } from '../shared/project';
@@ -3083,6 +3084,8 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
 }
 ipcMain.handle('pty:write', (_evt, id: string, data: string) => {
   if (typeof id !== 'string' || typeof data !== 'string') return { ok: false, error: 'invalid args' };
+  // Typing in a room lead counts as using it, for the room terminal cap.
+  if (isLeadAgentId(id)) roomWiring.touchLead(id);
   return ptyManager.write(id, data);
 });
 ipcMain.handle('pty:resize', (_evt, id: string, cols: number, rows: number) => {
@@ -4623,6 +4626,10 @@ registerRoomIpc(createRoomHandlers({
     return res;
   },
   archiveLead: (agentId) => roomWiring.archiveLeadCard(agentId),
+  liveLeadIds: () => ptyManager.list().map((p) => p.id).filter(isLeadAgentId),
+  roomPtyCap: () => roomPtyCap(readConfig().roomPtyCap),
+  touchLead: roomWiring.touchLead,
+  leadLastUsed: roomWiring.leadLastUsed,
   log: (line) => console.error(line)
 }));
 

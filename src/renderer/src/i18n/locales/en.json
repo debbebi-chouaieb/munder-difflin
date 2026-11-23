@@ -1468,7 +1468,8 @@
       "spawn-failed": "The lead terminal could not start.",
       "stop-failed": "The lead terminal could not be stopped.",
       "read-failed": "Could not read this project's data.",
-      "busy": "Still working on the last request. Try again in a moment."
+      "busy": "Still working on the last request. Try again in a moment.",
+      "room-cap": "Too many lead terminals are open. Stop one to open this one."
     },
     "trust": {
       "title": "TRUST THIS PROJECT?",
@@ -1490,6 +1491,12 @@
       "cancel": "Cancel",
       "resume": "Resume anyway",
       "newSession": "New session"
+    },
+    "cap": {
+      "title": "TOO MANY TERMINALS",
+      "body": "{{cap}} lead terminals are already open. Stop the {{name}} lead, the one used least recently, and open this one? Its session stays resumable.",
+      "cancel": "Cancel",
+      "confirm": "Stop and open"
     },
     "sessions": {
       "title": "SESSIONS",

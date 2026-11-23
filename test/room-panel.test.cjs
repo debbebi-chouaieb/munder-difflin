@@ -52,6 +52,12 @@ test('large-session asks before resuming and carries the size, even when unknown
   assert.equal(model.openStep(request, { ok: false, error: 'large-session', contextTokens: null }).contextTokens, null);
 });
 
+test('room-cap offers to stop the named lead and keeps the request to retry', () => {
+  const request = { sessionId: ABC };
+  assert.deepEqual(model.openStep(request, { ok: false, error: 'room-cap', cap: 3, closeProjectId: 'web', closeName: 'Web' }),
+    { kind: 'confirm-cap', request, cap: 3, closeProjectId: 'web', closeName: 'Web' });
+});
+
 test('every other failure becomes a translated message', () => {
   assert.deepEqual(model.openStep({}, { ok: false, error: 'spawn-failed' }), { kind: 'failed', errorKey: 'room.errors.spawn-failed' });
 });

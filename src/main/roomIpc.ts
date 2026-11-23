@@ -42,6 +42,14 @@ export interface RoomDeps {
   /** The stored form of the repo's root commits in `cwd`, or null (no git, no commit). */
   repoRoot: (cwd: string) => Promise<string | null>;
   killLead: (agentId: string) => { ok: boolean; error?: string };
+  /** Ids of lead PTYs that are alive now. */
+  liveLeadIds: () => string[];
+  /** Live room lead terminals allowed at once (config `roomPtyCap`). */
+  roomPtyCap: () => number;
+  /** Notes that the person used this lead's terminal now (opened it, typed in it). */
+  touchLead: (agentId: string) => void;
+  /** Epoch ms the lead's terminal was last used, or 0 when never seen. */
+  leadLastUsed: (agentId: string) => number;
   /** Removes the lead's card from the window; harmless when it is already gone. */
   archiveLead: (agentId: string) => void;
   log: (line: string) => void;
@@ -69,6 +77,8 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     const agentId = leadAgentIdFor(project);
     const cwd = await deps.resolveProjectCwd(project.path);
     if (!cwd) return { ok: false, error: 'project-moved' };
+    const full = await capReached(project);
+    if (full) return full;
     // Stored trust holds only for the repo it was given to (ADR 0007). Another repo
     // in the folder drops it, Claude's own folder trust included, and asks again.
     const state = await deps.trustState(project, cwd);
@@ -112,7 +122,30 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     if (project.leadAgentId !== agentId && !deps.patchProject(project.id, { leadAgentId: agentId })) {
       deps.log(`[room] could not store the lead id of ${project.id}`);
     }
+    deps.touchLead(agentId);
     return { ok: true, agentId, alreadyRunning: false, untrusted: !trusted };
+  };
+
+  /**
+   * The answer when `roomPtyCap` lead terminals already run or are opening
+   * (ADR 0005), naming the least recently used live one to stop; null while
+   * there is room. A lead whose project is gone cannot be stopped from a room,
+   * so it does not count. Only live leads can be offered; when the cap is full
+   * of opens still in flight, the person retries.
+   */
+  const capReached = async (project: Project): Promise<OpenTerminalResult | null> => {
+    const cap = deps.roomPtyCap();
+    const projects = await deps.projects();
+    const live = deps.liveLeadIds()
+      .map((id) => projects.find((p) => leadAgentIdFor(p) === id))
+      .filter((p): p is Project => p !== undefined && p.id !== project.id);
+    const inFlight = [...opening.keys()].filter((id) => id !== project.id && !live.some((p) => p.id === id)).length;
+    if (live.length + inFlight < cap) return null;
+    const lru = live.reduce<Project | null>((best, p) =>
+      !best || deps.leadLastUsed(leadAgentIdFor(p)) < deps.leadLastUsed(leadAgentIdFor(best)) ? p : best, null);
+    if (!lru) return { ok: false, error: 'busy' };
+    deps.log(`[room] ${cap} lead terminals open; offering to stop ${lru.id} for ${project.id}`);
+    return { ok: false, error: 'room-cap', cap, closeProjectId: lru.id, closeName: lru.name };
   };
 
   return {
@@ -148,6 +181,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       if (!parsed) return { ok: false, error: 'invalid-request' };
       const agentId = leadAgentIdFor(project);
       if (deps.isRunning(agentId)) {
+        deps.touchLead(agentId);
         deps.announceLead(agentId, `${project.name} lead`, (await deps.resolveProjectCwd(project.path)) ?? project.path, sender);
         return { ok: true, agentId, alreadyRunning: true, untrusted: !project.trusted };
       }

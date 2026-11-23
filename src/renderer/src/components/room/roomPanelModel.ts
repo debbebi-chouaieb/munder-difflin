@@ -29,6 +29,8 @@ export type OpenStep =
   | { kind: 'ask-trust'; request: OpenTerminalRequest; path: string; claudeTrusts: boolean }
   /** Ask before resuming a large session; `contextTokens` null when the size is unknown. */
   | { kind: 'confirm-large'; request: OpenTerminalRequest; contextTokens: number | null }
+  /** The room terminal cap is reached: offer to stop the least recently used lead, then open. */
+  | { kind: 'confirm-cap'; request: OpenTerminalRequest; cap: number; closeProjectId: string; closeName: string }
   | { kind: 'failed'; errorKey: string };
 
 export function openStep(request: OpenTerminalRequest, result: OpenTerminalResult): OpenStep {
@@ -38,6 +40,8 @@ export function openStep(request: OpenTerminalRequest, result: OpenTerminalResul
       return { kind: 'ask-trust', request, path: result.path, claudeTrusts: result.claudeTrusts };
     case 'large-session':
       return { kind: 'confirm-large', request, contextTokens: result.contextTokens };
+    case 'room-cap':
+      return { kind: 'confirm-cap', request, cap: result.cap, closeProjectId: result.closeProjectId, closeName: result.closeName };
     default:
       return { kind: 'failed', errorKey: roomErrorKey(result.error) };
   }
