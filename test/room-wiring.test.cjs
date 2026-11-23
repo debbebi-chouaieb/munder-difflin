@@ -122,3 +122,38 @@ test('lead cards: announce sends the lead card and skips a destroyed window', ()
   w.announceLead('lead--app', 'App lead', 'D:/ws/App', target);
   assert.equal(target.sent.length, 1);
 });
+
+test('trusted lead folder: only a trusted project, in its own plain folder', async (t) => {
+  const ws = tempDir(t);
+  const app = path.join(ws, 'App');
+  const web = path.join(ws, 'Web');
+  fs.mkdirSync(app);
+  fs.mkdirSync(web);
+  const projects = [
+    { id: 'app', path: app, leadAgentId: 'lead--app', trusted: true },
+    { id: 'web', path: web, leadAgentId: null, trusted: false }
+  ];
+  const { w } = wiring({ root: ws });
+  assert.equal(await w.trustedLeadFolder('lead--app', app, projects), app);
+  assert.equal(await w.trustedLeadFolder('lead--app', app.toUpperCase(), projects), process.platform === 'win32' ? app : null);
+  assert.equal(await w.trustedLeadFolder('lead--web', web, projects), null, 'project not trusted');
+  assert.equal(await w.trustedLeadFolder('lead--gone', app, projects), null, 'unknown lead fails closed');
+  assert.equal(await w.trustedLeadFolder('lead--app', app, null), null, 'project list late: fail closed');
+  assert.equal(await w.trustedLeadFolder('lead--app', web, projects), null, 'a replay with another cwd runs untrusted');
+  const link = path.join(ws, 'link');
+  fs.symlinkSync(app, link, 'junction');
+  assert.equal(await w.trustedLeadFolder('lead--app', link, projects), null, 'a link to the project is not the project');
+});
+
+test('still lead folder: a folder swapped for a link fails the last check', async (t) => {
+  const ws = tempDir(t);
+  const app = path.join(ws, 'App');
+  const other = path.join(ws, 'Other');
+  fs.mkdirSync(app);
+  fs.mkdirSync(other);
+  const { w } = wiring({ root: ws });
+  assert.equal(await w.stillLeadFolder(app, app), true);
+  fs.rmSync(app, { recursive: true });
+  fs.symlinkSync(other, app, 'junction');
+  assert.equal(await w.stillLeadFolder(app, app), false);
+});

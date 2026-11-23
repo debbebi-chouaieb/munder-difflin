@@ -5,6 +5,8 @@
 import { join } from 'node:path';
 import { lstat, readFile, stat } from 'node:fs/promises';
 import type { WebContents } from 'electron';
+import { samePath, type Project } from '../shared/project';
+import { leadAgentIdFor } from '../shared/roomLead';
 import { claudeTrustCovers, claudeTrustsExactly, projectMcpConfigNear, trustPromptExpected } from '../shared/claudeTrust';
 import { resolveAllowedRoot } from './rootGuard';
 
@@ -27,6 +29,15 @@ export interface RoomWiring {
   leadMayMeetTrustPrompt: (cwd: string) => Promise<boolean>;
   /** The project folder's real path when it is a plain folder inside the workspace, else null. */
   resolveProjectCwd: (projectPath: string) => Promise<string | null>;
+  /**
+   * The folder a lead may run trusted in: its project is trusted and `cwd` is
+   * that project's own folder, a plain folder in the workspace. Anything else
+   * (a replay with another cwd, a moved or linked folder, a late project list
+   * passed as null) gives null: run untrusted.
+   */
+  trustedLeadFolder: (leadId: string, cwd: string, projects: Project[] | null) => Promise<string | null>;
+  /** Whether `cwd` still resolves to `folder` right before a trusted spawn. */
+  stillLeadFolder: (cwd: string, folder: string) => Promise<boolean>;
   /** Records the window that opened a lead, so its archive goes where its card was made. */
   ownLead: (agentId: string, owner: WebContents) => void;
   leadWindow: (agentId: string) => WebContents | null;
@@ -52,6 +63,17 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
     }
   };
 
+  const resolveProjectCwd = async (projectPath: string): Promise<string | null> => {
+    const root = deps.workspaceRoot();
+    if (!root) return null;
+    try {
+      if ((await lstat(projectPath)).isSymbolicLink()) return null;
+    } catch {
+      return null;
+    }
+    return resolveAllowedRoot(projectPath, [root]);
+  };
+
   const leadWindow = (agentId: string): WebContents | null => {
     const owner = leadOwners.get(agentId);
     return owner && !owner.isDestroyed() ? owner : deps.liveWebContents();
@@ -71,15 +93,19 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
       return trustPromptExpected({ claudeTrustsExactly: exact, hasProjectMcp });
     },
 
-    async resolveProjectCwd(projectPath) {
-      const root = deps.workspaceRoot();
-      if (!root) return null;
-      try {
-        if ((await lstat(projectPath)).isSymbolicLink()) return null;
-      } catch {
-        return null;
-      }
-      return resolveAllowedRoot(projectPath, [root]);
+    resolveProjectCwd,
+
+    async trustedLeadFolder(leadId, cwd, projects) {
+      const project = projects?.find((p) => leadAgentIdFor(p) === leadId);
+      if (!project?.trusted) return null;
+      const folder = await resolveProjectCwd(project.path);
+      const actual = await resolveProjectCwd(cwd);
+      return folder && actual && samePath(folder, actual) ? folder : null;
+    },
+
+    async stillLeadFolder(cwd, folder) {
+      const actual = await resolveProjectCwd(cwd);
+      return !!actual && samePath(actual, folder);
     },
 
     ownLead(agentId, owner) {

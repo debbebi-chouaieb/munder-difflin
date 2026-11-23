@@ -10,7 +10,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
 
-const { buildLeadSpawn, leadAgentIdFor, parseOpenRequest, spawnPosture, leadMustRunUntrusted, isLeadAgentId, withoutClaudeBypassArgs } = loadTs('src/shared/roomLead.ts');
+const { buildLeadSpawn, leadAgentIdFor, parseOpenRequest, spawnPosture, leadIdOfSpawn, isLeadAgentId, withoutClaudeBypassArgs } = loadTs('src/shared/roomLead.ts');
 const { claudeTrustCovers, claudeTrustsExactly, trustPromptExpected, projectMcpConfigNear, mcpConfigCandidates, TrustPromptGate, hookProvesTurn } = loadTs('src/shared/claudeTrust.ts');
 const { createRoomHandlers } = loadTs('src/main/roomIpc.ts');
 
@@ -79,14 +79,14 @@ test('spawn posture: untrusted grants neither pre-accept nor auto mode', () => {
   assert.deepEqual(spawnPosture(true, true), { preAcceptTrust: false, autoMode: false });
 });
 
-test('lead trust is decided from the project, whatever path spawns it', () => {
-  const projects = [{ id: 'app', leadAgentId: 'lead--app', trusted: false }, { id: 'web', leadAgentId: null, trusted: true }];
-  assert.equal(leadMustRunUntrusted('lead--app', projects), true);
-  assert.equal(leadMustRunUntrusted('lead--web', projects), false);
-  assert.equal(leadMustRunUntrusted('lead--gone', projects), true); // unknown lead fails closed
-  assert.equal(leadMustRunUntrusted('lead--web', null), true); // project list late: fail closed
-  assert.equal(leadMustRunUntrusted('dev-1', projects), false); // other agents unchanged
-  assert.equal(leadMustRunUntrusted('lead-dev-1732000000000', projects), false); // a hand-hired "Lead Dev"
+test('lead id of a spawn: both ids must agree when either is a lead id', () => {
+  assert.deepEqual(leadIdOfSpawn('lead--app', 'lead--app'), { ok: true, leadId: 'lead--app' });
+  assert.deepEqual(leadIdOfSpawn('lead--app', undefined), { ok: true, leadId: 'lead--app' });
+  assert.deepEqual(leadIdOfSpawn('dev-1', 'dev-1'), { ok: true, leadId: null }); // other agents unchanged
+  assert.deepEqual(leadIdOfSpawn('lead-dev-1732000000000', undefined), { ok: true, leadId: null }); // a hand-hired "Lead Dev"
+  assert.equal(leadIdOfSpawn('lead--app', 'x').ok, false); // a plain hive id must not hide a lead
+  assert.equal(leadIdOfSpawn('x', 'lead--app').ok, false);
+  assert.equal(leadIdOfSpawn('lead--app', 'lead--web').ok, false);
   assert.equal(isLeadAgentId('lead--app'), true);
   assert.equal(isLeadAgentId('lead-dev-1'), false);
 });
@@ -407,13 +407,15 @@ test('preload sends only a project id and a request object for room calls', () =
 
 test('wiring: spawn core decides lead trust and applies the posture; automation honours the gate', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
-  assert.match(src, /if \(isLeadAgentId\(leadId\) && leadMustRunUntrusted\(leadId, await projectsWithin\(LEAD_TRUST_WAIT_MS\)\)\) \{\s*opts\.untrusted = true;/);
+  assert.match(src, /const lead = leadIdOfSpawn\(opts\.id, opts\.hive\?\.id\);\s*if \(!lead\.ok\) return \{ ok: false, error: lead\.error \};/);
+  assert.match(src, /trustedLeadCwd = await roomWiring\.trustedLeadFolder\(lead\.leadId, opts\.cwd, await projectsWithin\(LEAD_TRUST_WAIT_MS\)\);\s*if \(!trustedLeadCwd\) opts\.untrusted = true;/);
+  assert.match(src, /if \(trustedLeadCwd && opts\.untrusted !== true && !\(await roomWiring\.stillLeadFolder\(opts\.cwd, trustedLeadCwd\)\)\) \{\s*return \{ ok: false/);
   assert.match(src, /if \(claudeProvider && opts\.untrusted === true\) opts\.args = withoutClaudeBypassArgs\(opts\.args \?\? \[\]\);/);
   assert.match(src, /if \(claudeProvider && spawnPosture\(opts\.untrusted === true, false\)\.preAcceptTrust\) \{\s*try \{ ensureClaudePermissionsAccepted/);
   assert.match(src, /argsWithAutoModeFlag\(opts\.args \?\? \[\], spawnPosture\(opts\.untrusted === true, !!cfg\.autoMode\)\.autoMode, provider\)/);
   // The gate: held after an untrusted spawn, released by a real turn and by teardown, read by both automations.
   // Held only where Claude will show a prompt: not in a folder Claude already trusts.
-  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && guardTrustPrompt\) trustPromptGate\.hold\(leadId\);/);
+  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);[\s\S]*?const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && guardTrustPrompt\) trustPromptGate\.hold\(leadId\);/);
   assert.match(src, /if \(agentId && hookProvesTurn\(event\)\) trustPromptGate\.release\(agentId\);/);
   assert.match(src, /trustPromptGate\.release\(agentId \?\? id\);/);
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);

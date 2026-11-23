@@ -89,18 +89,16 @@ export function isLeadAgentId(agentId: string): boolean {
 }
 
 /**
- * Main decides trust for every lead spawn, whatever path started it (room,
- * Restore team, a card restart). A lead runs trusted only when its project is
- * trusted; a lead whose project cannot be found (or a project list that did not
- * arrive in time, passed as null) runs untrusted: fail closed.
+ * The lead id a spawn claims. A spawn carries two ids (pty and hive); when either
+ * one is a lead id, both must be that same id, or a lead could hide behind a
+ * plain hive id and skip the trust check.
  */
-export function leadMustRunUntrusted(
-  agentId: string,
-  projects: ReadonlyArray<Pick<LeadProject, 'id' | 'leadAgentId'> & { trusted: boolean }> | null
-): boolean {
-  if (!isLeadAgentId(agentId)) return false;
-  const project = projects?.find((p) => leadAgentIdFor(p) === agentId);
-  return !project?.trusted;
+export function leadIdOfSpawn(id: string, hiveId: string | undefined): { ok: true; leadId: string | null } | { ok: false; error: string } {
+  const ids = [id, ...(hiveId === undefined ? [] : [hiveId])];
+  const lead = ids.find(isLeadAgentId);
+  if (!lead) return { ok: true, leadId: null };
+  if (ids.some((other) => other !== lead)) return { ok: false, error: 'a lead spawn must use its lead id for both pty and hive' };
+  return { ok: true, leadId: lead };
 }
 
 /**

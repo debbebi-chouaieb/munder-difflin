@@ -37,7 +37,7 @@ import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessio
 import { SessionLister } from './projectSessions';
 import { readRoomTickets } from './projectTickets';
 import { createRoomHandlers, registerRoomIpc } from './roomIpc';
-import { isLeadAgentId, leadMustRunUntrusted, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
+import { leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
 import type { Project } from '../shared/project';
@@ -2656,9 +2656,14 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // Trust for a project lead is decided here, not by the caller (ADR 0005): Restore
   // team and a card restart reach this through pty:spawn and never pass `untrusted`.
   // Only leads wait for the project list, and never for long.
+  // A trusted lead must also run in its project's own folder; see trustedLeadFolder.
+  const lead = leadIdOfSpawn(opts.id, opts.hive?.id);
+  if (!lead.ok) return { ok: false, error: lead.error };
   const leadId = opts.hive?.id ?? opts.id;
-  if (isLeadAgentId(leadId) && leadMustRunUntrusted(leadId, await projectsWithin(LEAD_TRUST_WAIT_MS))) {
-    opts.untrusted = true;
+  let trustedLeadCwd: string | null = null;
+  if (lead.leadId) {
+    trustedLeadCwd = await roomWiring.trustedLeadFolder(lead.leadId, opts.cwd, await projectsWithin(LEAD_TRUST_WAIT_MS));
+    if (!trustedLeadCwd) opts.untrusted = true;
   }
   // Never start an agent in a network folder: even checking it (isRepo below)
   // makes Windows authenticate to that server with the user's credentials.
@@ -3058,6 +3063,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // Guard only where Claude may show a startup prompt that Enter answers "yes";
   // elsewhere queued mail can flow (ADR 0005). Unknown cwd: guard.
   const guardTrustPrompt = claudeProvider && opts.untrusted === true && (!opts.cwd || await roomWiring.leadMayMeetTrustPrompt(opts.cwd));
+  // The folder could have been swapped for a link during the awaits above.
+  if (trustedLeadCwd && opts.untrusted !== true && !(await roomWiring.stillLeadFolder(opts.cwd, trustedLeadCwd))) {
+    return { ok: false, error: 'the project folder changed before the lead started' };
+  }
   const res = ptyManager.spawn(opts, owner);
   if (res.ok && guardTrustPrompt) trustPromptGate.hold(leadId);
   if (res.ok) analytics.track('agent_spawned', { provider });
