@@ -292,6 +292,25 @@ test('open: two quick clicks share one spawn', async () => {
   assert.equal(calls.spawn.length, 1);
 });
 
+test('open: a click from a second window while opening gets its own card', async () => {
+  const { d, calls } = deps();
+  let release;
+  d.spawnLead = (opts) => new Promise((resolve) => { calls.spawn.push(opts); release = () => resolve({ ok: true }); });
+  const h = createRoomHandlers(d);
+  const winA = { name: 'A' };
+  const winB = { name: 'B' };
+  const first = h.openTerminal('app', null, winA);
+  await new Promise((r) => setImmediate(r));
+  const second = h.openTerminal('app', null, winB);
+  const third = h.openTerminal('app', null, winA);
+  await new Promise((r) => setImmediate(r));
+  release();
+  assert.deepEqual(await first, await second);
+  await third;
+  assert.equal(calls.spawn.length, 1);
+  assert.deepEqual(calls.announce.map((a) => a[3]), [winB], 'only the other window is announced; the spawn announced to A');
+});
+
 test('open: a different request while one is opening is busy', async () => {
   const { d, calls } = deps();
   let release;
@@ -332,6 +351,17 @@ test('open: spawn failures map to codes; the raw error is only logged', async ()
   const failed = deps({ spawnResult: { ok: false, error: 'cwd does not exist: C:\\Users\\me\\secret' } });
   assert.deepEqual(await createRoomHandlers(failed.d).openTerminal('app', null, null), { ok: false, error: 'spawn-failed' });
   assert.ok(failed.calls.log.some((m) => m.includes('C:\\Users\\me\\secret')));
+});
+
+test('open: a "yes" whose spawn failed is undone, so the next open asks again', async () => {
+  const failed = deps({ project: { trusted: false }, spawnResult: { ok: false, error: 'boom' } });
+  const h = createRoomHandlers(failed.d);
+  assert.deepEqual(await h.openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null), { ok: false, error: 'spawn-failed' });
+  assert.deepEqual(failed.calls.patch, [['app', { trustedPath: 'D:/ws/App' }], ['app', { trustedPath: null }]]);
+
+  const already = deps({ spawnResult: { ok: false, error: 'boom' } });
+  await createRoomHandlers(already.d).openTerminal('app', null, null);
+  assert.deepEqual(already.calls.patch, [], 'trust given earlier is not touched by a failed spawn');
 });
 
 test('open: a throwing spawn is reported, and the next click can try again', async () => {
@@ -421,6 +451,7 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);
   assert.match(src, /trustPending: trustPromptGate\.blocks\(agentId\)/);
   assert.match(src, /registerRoomIpc\(createRoomHandlers\(/);
+  assert.match(src, /const res = ptyManager\.kill\(agentId\);[^]*?if \(!res\.ok\) return res;\s*teardownPty\(agentId\);\s*roomWiring\.archiveLeadCard\(agentId\);/);
   const hive = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/src/hooks/useHive.ts'), 'utf8');
   assert.match(hive, /if \(control\?\.trustPending\) return \{ sent: false \};/);
 });

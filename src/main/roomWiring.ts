@@ -110,6 +110,10 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
 
     ownLead(agentId, owner) {
       leadOwners.set(agentId, owner);
+      // A closed window must not stay referenced by a lead that is never stopped.
+      owner.once('destroyed', () => {
+        if (leadOwners.get(agentId) === owner) leadOwners.delete(agentId);
+      });
     },
 
     leadWindow,

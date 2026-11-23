@@ -34,25 +34,23 @@ export interface RoomDeps {
   /** Re-announces a running lead, so a reloaded window gets its card back. */
   announceLead: (agentId: string, name: string, cwd: string, sender: WebContents | null) => void;
   /** Saves stored project fields; false when the write failed. */
-  patchProject: (projectId: string, patch: { leadAgentId?: string; trustedPath?: string }) => boolean;
+  patchProject: (projectId: string, patch: { leadAgentId?: string; trustedPath?: string | null }) => boolean;
   killLead: (agentId: string) => { ok: boolean; error?: string };
   /** Removes the lead's card from the window; harmless when it is already gone. */
   archiveLead: (agentId: string) => void;
   log: (line: string) => void;
 }
 
-export type OpenResult = OpenTerminalResult;
-
 export interface RoomHandlers {
   sessions: (projectId: unknown) => Promise<RoomResult<{ sessions: SessionSummary[] }>>;
   tickets: (projectId: unknown) => Promise<RoomResult<{ tickets: RoomTickets }>>;
-  openTerminal: (projectId: unknown, request: unknown, sender: WebContents | null) => Promise<OpenResult>;
+  openTerminal: (projectId: unknown, request: unknown, sender: WebContents | null) => Promise<OpenTerminalResult>;
   closeTerminal: (projectId: unknown) => Promise<RoomDone>;
 }
 
 export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
   // One open per room at a time; a second click shares the first one's result.
-  const opening = new Map<string, { request: OpenRequest; result: Promise<OpenResult> }>();
+  const opening = new Map<string, { request: OpenRequest; result: Promise<OpenTerminalResult>; sender: WebContents | null }>();
 
   /** Rooms exist for enabled projects only; closing also works after a project is disabled. */
   const findProject = async (projectId: unknown, enabledOnly: boolean): Promise<Project | null> => {
@@ -61,7 +59,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     return project && (!enabledOnly || project.enabled) ? project : null;
   };
 
-  const open = async (project: Project, request: OpenRequest, sender: WebContents | null): Promise<OpenResult> => {
+  const open = async (project: Project, request: OpenRequest, sender: WebContents | null): Promise<OpenTerminalResult> => {
     const agentId = leadAgentIdFor(project);
     const cwd = await deps.resolveProjectCwd(project.path);
     if (!cwd) return { ok: false, error: 'project-moved' };
@@ -79,13 +77,18 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     // Saved only once every check passed, so a refused open stores nothing. Main
     // re-reads trust at spawn, so an unsaved "yes" opens untrusted, and says so.
     let trusted = project.trusted;
-    if (!trusted && request.trust === 'yes') {
+    const grantedNow = !trusted && request.trust === 'yes';
+    if (grantedNow) {
       trusted = deps.patchProject(project.id, { trustedPath: project.path });
       if (!trusted) deps.log(`[room] could not store trust for ${project.id}; opening untrusted`);
     }
     const res = await deps.spawnLead(buildLeadSpawn(project, cwd, request.sessionId, trusted), sender);
     if (!res.ok) {
       deps.log(`[room] lead spawn failed for ${project.id}: ${res.error ?? 'no detail'}`);
+      // A "yes" to an open that never ran is not kept: the next open asks again.
+      if (grantedNow && trusted && !deps.patchProject(project.id, { trustedPath: null })) {
+        deps.log(`[room] could not undo trust for ${project.id} after a failed spawn`);
+      }
       return { ok: false, error: res.resumeNotFound ? 'session-not-found' : 'spawn-failed' };
     }
     if (project.leadAgentId !== agentId && !deps.patchProject(project.id, { leadAgentId: agentId })) {
@@ -132,12 +135,20 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       }
       const pending = opening.get(project.id);
       // A double click shares the open; a different request waits for the person to retry.
-      if (pending) return sameOpenRequest(pending.request, parsed) ? pending.result : { ok: false, error: 'busy' };
-      const result = open(project, parsed, sender).catch((e): OpenResult => {
+      if (pending) {
+        if (!sameOpenRequest(pending.request, parsed)) return { ok: false, error: 'busy' };
+        const shared = await pending.result;
+        // The open announced the card to its own window; another window needs its own.
+        if (shared.ok && sender !== pending.sender) {
+          deps.announceLead(agentId, `${project.name} lead`, (await deps.resolveProjectCwd(project.path)) ?? project.path, sender);
+        }
+        return shared;
+      }
+      const result = open(project, parsed, sender).catch((e): OpenTerminalResult => {
         deps.log(`[room] open terminal failed for ${project.id}: ${errText(e)}`);
         return { ok: false, error: 'spawn-failed' };
       }).finally(() => opening.delete(project.id));
-      opening.set(project.id, { request: parsed, result });
+      opening.set(project.id, { request: parsed, result, sender });
       return result;
     },
 

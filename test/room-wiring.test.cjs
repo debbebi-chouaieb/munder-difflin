@@ -20,9 +20,12 @@ function tempDir(t) {
 
 function fakeWindow(over = {}) {
   const sent = [];
+  const onDestroyed = [];
   return {
     sent,
     destroyed: false,
+    once(event, fn) { if (event === 'destroyed') onDestroyed.push(fn); },
+    destroy() { this.destroyed = true; onDestroyed.splice(0).forEach((fn) => fn()); },
     isDestroyed() { return this.destroyed; },
     send(channel, payload) {
       if (over.throws) throw new Error('window gone');
@@ -156,4 +159,20 @@ test('still lead folder: a folder swapped for a link fails the last check', asyn
   fs.rmSync(app, { recursive: true });
   fs.symlinkSync(other, app, 'junction');
   assert.equal(await w.stillLeadFolder(app, app), false);
+});
+
+test('lead cards: a destroyed owner window is forgotten, a newer owner is kept', () => {
+  const live = fakeWindow();
+  const { w } = wiring({ live });
+  const first = fakeWindow();
+  w.ownLead('lead--app', first);
+  first.destroy();
+  first.destroyed = false; // even if it claimed to be alive, the entry is gone
+  assert.equal(w.leadWindow('lead--app'), live);
+  const old = fakeWindow();
+  const next = fakeWindow();
+  w.ownLead('lead--web', old);
+  w.ownLead('lead--web', next);
+  old.destroy();
+  assert.equal(w.leadWindow('lead--web'), next);
 });

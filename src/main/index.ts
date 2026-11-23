@@ -4610,6 +4610,8 @@ registerRoomIpc(createRoomHandlers({
   },
   killLead: (agentId) => {
     const res = ptyManager.kill(agentId);
+    // A failed kill leaves the process running: keep its card, gate and Stop button.
+    if (!res.ok) return res;
     teardownPty(agentId);
     roomWiring.archiveLeadCard(agentId);
     return res;
