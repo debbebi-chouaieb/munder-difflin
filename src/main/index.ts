@@ -34,12 +34,12 @@ import { KnowledgeManager } from './knowledge';
 import { MemoryReflector, type ReflectSettings } from './reflect';
 import { PersistStore } from './db';
 import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessionCwd, projectDir } from './transcript';
-import { lstat, readFile, stat } from 'node:fs/promises';
 import { SessionLister } from './projectSessions';
 import { readRoomTickets } from './projectTickets';
 import { createRoomHandlers, registerRoomIpc } from './roomIpc';
 import { isLeadAgentId, leadMustRunUntrusted, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
-import { claudeTrustCovers, claudeTrustsExactly, hookProvesTurn, projectMcpConfigNear, trustPromptExpected, TrustPromptGate } from '../shared/claudeTrust';
+import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
+import { createRoomWiring } from './roomWiring';
 import type { Project } from '../shared/project';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
@@ -3057,7 +3057,7 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   }
   // Guard only where Claude may show a startup prompt that Enter answers "yes";
   // elsewhere queued mail can flow (ADR 0005). Unknown cwd: guard.
-  const guardTrustPrompt = claudeProvider && opts.untrusted === true && (!opts.cwd || await leadMayMeetTrustPrompt(opts.cwd));
+  const guardTrustPrompt = claudeProvider && opts.untrusted === true && (!opts.cwd || await roomWiring.leadMayMeetTrustPrompt(opts.cwd));
   const res = ptyManager.spawn(opts, owner);
   if (res.ok && guardTrustPrompt) trustPromptGate.hold(leadId);
   if (res.ok) analytics.track('agent_spawned', { provider });
@@ -4557,7 +4557,6 @@ registerProjectsIpc(projectService);
 // ─── IPC: project rooms (ADR 0005) ───────────────────────────────────────────
 /** A stalled scan (a slow mapped drive) must not hang a lead spawn; late means untrusted. */
 const LEAD_TRUST_WAIT_MS = 2000;
-const CLAUDE_CONFIG_MAX_BYTES = 32 * 1024 * 1024;
 async function projectsWithin(ms: number): Promise<Project[] | null> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
@@ -4570,62 +4569,17 @@ async function projectsWithin(ms: number): Promise<Project[] | null> {
 // Sessions, ticket tables and the lead's terminal of a project. The renderer
 // sends a project id only; the lead runs through the shared spawn core.
 const sessionLister = new SessionLister({ dirFor: projectDir, log: (line) => console.error(line) });
-// The window that opened each lead, so its archive goes where its card was made.
-const leadOwners = new Map<string, Electron.WebContents>();
-const leadWindow = (agentId: string): Electron.WebContents | null => {
-  const owner = leadOwners.get(agentId);
-  return owner && !owner.isDestroyed() ? owner : liveWebContents();
-};
-/** Tells the lead's window to archive its card; the renderer ignores an unknown id. */
-const archiveLeadCard = (agentId: string): void => {
-  const target = leadWindow(agentId);
-  leadOwners.delete(agentId);
-  try { target?.send('hive:agentArchived', { id: agentId }); } catch { /* window torn down */ }
-};
-const announceLead = (id: string, name: string, cwd: string, target: Electron.WebContents | null): void => {
-  try {
-    if (target && !target.isDestroyed()) target.send('hive:agentSpawned', { id, name, provider: 'claude', cwd, command: 'claude', role: 'lead' });
-  } catch { /* window torn down */ }
-};
-/** Parsed ~/.claude.json, or null when it is missing, too big or unreadable (then Claude will ask). */
-async function readClaudeConfig(): Promise<unknown> {
-  const file = join(homedir(), '.claude.json');
-  try {
-    if ((await stat(file)).size > CLAUDE_CONFIG_MAX_BYTES) {
-      console.error('[room] ~/.claude.json too big to check folder trust');
-      return null;
-    }
-    return JSON.parse(await readFile(file, 'utf8'));
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== 'ENOENT') console.error(`[room] could not read ~/.claude.json: ${e instanceof Error ? e.message : String(e)}`);
-    return null;
-  }
-}
-
-/** Claude Code already trusts `cwd` or a parent (~/.claude.json), so it shows no folder-trust dialog there. */
-async function claudeTrustsFolder(cwd: string): Promise<boolean> {
-  return claudeTrustCovers(await readClaudeConfig(), cwd, process.platform === 'win32');
-}
-
-/** Whether an untrusted lead in `cwd` may meet a startup prompt that Enter would answer "yes" (ADR 0005). */
-async function leadMayMeetTrustPrompt(cwd: string): Promise<boolean> {
-  const exact = claudeTrustsExactly(await readClaudeConfig(), cwd, process.platform === 'win32');
-  const hasProjectMcp = await projectMcpConfigNear(cwd, (path) => lstat(path), (line) => console.error(line));
-  return trustPromptExpected({ claudeTrustsExactly: exact, hasProjectMcp });
-}
+const roomWiring = createRoomWiring({
+  homedir,
+  caseInsensitivePaths: process.platform === 'win32',
+  workspaceRoot: () => readConfig().workspaceRoot,
+  liveWebContents: () => liveWebContents(),
+  log: (line) => console.error(line)
+});
 registerRoomIpc(createRoomHandlers({
   projects: async () => (await projectService.current()).projects,
-  claudeTrusts: claudeTrustsFolder,
-  resolveProjectCwd: async (projectPath) => {
-    const root = readConfig().workspaceRoot;
-    if (!root) return null;
-    try {
-      if ((await lstat(projectPath)).isSymbolicLink()) return null;
-    } catch {
-      return null;
-    }
-    return resolveAllowedRoot(projectPath, [root]);
-  },
+  claudeTrusts: roomWiring.claudeTrustsFolder,
+  resolveProjectCwd: roomWiring.resolveProjectCwd,
   sessions: sessionLister,
   tickets: (project) => readRoomTickets(project, (line) => console.error(line)),
   isRunning: (agentId) => ptyManager.has(agentId),
@@ -4634,12 +4588,12 @@ registerRoomIpc(createRoomHandlers({
     const res = await spawnAgentCore({ ...opts, hive: { ...opts.hive } }, owner);
     // Main started this agent, so the floor only cards it from this broadcast.
     if (res.ok) {
-      if (owner) leadOwners.set(opts.id, owner);
-      announceLead(opts.id, opts.hive.name, res.cwd ?? opts.cwd, owner ?? liveWebContents());
+      if (owner) roomWiring.ownLead(opts.id, owner);
+      roomWiring.announceLead(opts.id, opts.hive.name, res.cwd ?? opts.cwd, owner ?? liveWebContents());
     }
     return res;
   },
-  announceLead: (id, name, cwd, sender) => announceLead(id, name, cwd, sender ?? leadWindow(id)),
+  announceLead: (id, name, cwd, sender) => roomWiring.announceLead(id, name, cwd, sender ?? roomWiring.leadWindow(id)),
   patchProject: (projectId, patch) => {
     const res = projectService.patch(projectId, patch);
     if (!res.ok) console.error(`[room] project ${projectId} not saved: ${res.error}`);
@@ -4648,10 +4602,10 @@ registerRoomIpc(createRoomHandlers({
   killLead: (agentId) => {
     const res = ptyManager.kill(agentId);
     teardownPty(agentId);
-    archiveLeadCard(agentId);
+    roomWiring.archiveLeadCard(agentId);
     return res;
   },
-  archiveLead: (agentId) => archiveLeadCard(agentId),
+  archiveLead: (agentId) => roomWiring.archiveLeadCard(agentId),
   log: (line) => console.error(line)
 }));
 

@@ -401,10 +401,7 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /argsWithAutoModeFlag\(opts\.args \?\? \[\], spawnPosture\(opts\.untrusted === true, !!cfg\.autoMode\)\.autoMode, provider\)/);
   // The gate: held after an untrusted spawn, released by a real turn and by teardown, read by both automations.
   // Held only where Claude will show a prompt: not in a folder Claude already trusts.
-  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await leadMayMeetTrustPrompt\(opts\.cwd\)\);\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && guardTrustPrompt\) trustPromptGate\.hold\(leadId\);/);
-  assert.match(src, /return trustPromptExpected\(\{ claudeTrustsExactly: exact, hasProjectMcp \}\);/);
-  // lstat, never stat: a planted .mcp.json link to a share must not be followed.
-  assert.match(src, /projectMcpConfigNear\(cwd, \(path\) => lstat\(path\)/);
+  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && guardTrustPrompt\) trustPromptGate\.hold\(leadId\);/);
   assert.match(src, /if \(agentId && hookProvesTurn\(event\)\) trustPromptGate\.release\(agentId\);/);
   assert.match(src, /trustPromptGate\.release\(agentId \?\? id\);/);
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);
