@@ -663,6 +663,9 @@ const api = {
     ipcRenderer.invoke('room:openTerminal', projectId, request ?? null),
   roomCloseTerminal: (projectId: string): Promise<RoomDone> =>
     ipcRenderer.invoke('room:closeTerminal', projectId),
+  /** A room lead's terminal went on or off this window's screen; main stops leads no window shows (ADR 0005). */
+  roomLeadShown: (agentId: string, shown: boolean): void =>
+    ipcRenderer.send('room:leadShown', agentId, shown),
   onProjectsChanged: (cb: (snapshot: ProjectsSnapshot) => void): (() => void) => {
     const listener = (_e: IpcRendererEvent, payload: ProjectsSnapshot) => cb(payload);
     ipcRenderer.on('projects:changed', listener);

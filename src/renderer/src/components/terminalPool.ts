@@ -124,9 +124,9 @@ function notifyThemeChange(ptyId: string, theme: 'light' | 'dark'): void {
 /** Scrollback of every pooled terminal except room leads (ADR 0005). */
 const DEFAULT_SCROLLBACK_LINES = 100_000;
 
-/** Whether this pty's terminal is in the document now (some view shows it). */
-export function isTerminalOnScreen(ptyId: string): boolean {
-  return pool.get(ptyId)?.host.isConnected === true;
+/** Tells main whether a room lead's terminal is on this window's screen (ADR 0005 idle shutdown). */
+function reportLeadShown(entry: TerminalEntry): void {
+  if (isLeadAgentId(entry.ptyId)) window.cth.roomLeadShown?.(entry.ptyId, entry.host.isConnected);
 }
 
 /** Lines a pooled terminal keeps. A room lead's pty id is its lead id. */
@@ -797,6 +797,7 @@ export function attachTerminal(entry: TerminalEntry, container: HTMLElement): vo
     scheduleWebglRecovery(entry.recovery, requestAnimationFrame, () =>
       repaintTerminalAfterRendererLoss(entry));
   }
+  reportLeadShown(entry);
 }
 
 /** Take the terminal off screen: drop the WebGL lease and unparent the host.
@@ -809,6 +810,7 @@ export function detachTerminal(entry: TerminalEntry, container: HTMLElement): vo
   if (entry.host.parentElement !== container) return;
   releaseWebglRenderer(entry);
   container.removeChild(entry.host);
+  reportLeadShown(entry);
 }
 
 function repaintTerminalAfterRendererLoss(entry: TerminalEntry): void {
@@ -924,8 +926,10 @@ export function disposeTerminal(ptyId: string): void {
   try { entry.webgl?.dispose(); } catch { /* noop */ }
   try { gl?.getExtension('WEBGL_lose_context')?.loseContext(); } catch { /* noop */ }
   try { entry.term.dispose(); } catch { /* noop */ }
+  const wasShown = entry.host.isConnected;
   entry.host.remove();
   pool.delete(ptyId);
+  if (wasShown) reportLeadShown(entry);
 }
 
 // ─── v0.3.4: ⌘-click a path in terminal output ──────────────────────────────

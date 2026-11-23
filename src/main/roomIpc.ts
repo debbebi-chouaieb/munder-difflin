@@ -59,7 +59,11 @@ export interface RoomHandlers {
   sessions: (projectId: unknown) => Promise<RoomResult<{ sessions: SessionSummary[] }>>;
   tickets: (projectId: unknown) => Promise<RoomResult<{ tickets: RoomTickets }>>;
   openTerminal: (projectId: unknown, request: unknown, sender: WebContents | null) => Promise<OpenTerminalResult>;
-  closeTerminal: (projectId: unknown) => Promise<RoomDone>;
+  /**
+   * `onlyIf` (main only, never from IPC): checked right before the kill; false
+   * leaves the lead running and answers `busy`. Idle shutdown passes its re-check.
+   */
+  closeTerminal: (projectId: unknown, onlyIf?: () => boolean) => Promise<RoomDone>;
 }
 
 export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
@@ -207,7 +211,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       return result;
     },
 
-    async closeTerminal(projectId) {
+    async closeTerminal(projectId, onlyIf) {
       const project = await findProject(projectId, false);
       if (!project) return { ok: false, error: 'unknown-project' };
       // A close during a slow spawn waits for it, so the new process is not left running.
@@ -220,6 +224,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         deps.archiveLead(agentId);
         return { ok: true, done: true };
       }
+      if (onlyIf && !onlyIf()) return { ok: false, error: 'busy' };
       const res = deps.killLead(agentId);
       if (!res.ok) {
         deps.log(`[room] stop failed for ${project.id}: ${res.error ?? 'no detail'}`);

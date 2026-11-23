@@ -272,3 +272,22 @@ test('lead use: last use per lead, 0 when never seen; typing into a lead counts 
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
   assert.match(src, /ipcMain\.handle\('pty:write'[^]*?if \(isLeadAgentId\(id\)\) roomWiring\.touchLead\(id\);[^]*?return ptyManager\.write\(id, data\);/);
 });
+
+test('lead shown: per window, both show and hide count as use, a closed window shows nothing', () => {
+  let now = 1000;
+  const w = createRoomWiring({
+    homedir: () => os.tmpdir(), caseInsensitivePaths: false, workspaceRoot: () => null, liveWebContents: () => null,
+    rootCommitsOutput: async () => null, patchProject: () => true, log: () => {}, now: () => now
+  });
+  const a = Object.assign(fakeWindow(), { id: 1 });
+  const b = Object.assign(fakeWindow(), { id: 2 });
+  assert.equal(w.isLeadShown('lead--app'), false);
+  w.setLeadShown('lead--app', a, true);
+  w.setLeadShown('lead--app', b, true);
+  now = 2000;
+  w.setLeadShown('lead--app', a, false);
+  assert.equal(w.isLeadShown('lead--app'), true, 'still on window B');
+  assert.equal(w.leadLastUsed('lead--app'), 2000, 'hiding starts the idle clock');
+  b.destroy();
+  assert.equal(w.isLeadShown('lead--app'), false);
+});

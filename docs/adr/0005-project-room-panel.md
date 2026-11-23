@@ -143,3 +143,20 @@ We chose **A**, reading ZetaHub from the cache.
 - With a lead running, a drag handle splits the lists from the terminal. Dragging it to the top, a double click or
   "Hide lists" gives the terminal the whole panel; the terminal keeps at least 120 px. The split is kept in memory
   for the app session and shared by every room.
+
+## Amendment, 2026-11-23 (Rooms-d: idle shutdown owned by main)
+- Idle shutdown runs in main, not in each window. A per-window check could stop a lead that another window
+  shows, and a keystroke between its check and the stop did not save the lead.
+- The renderer's terminal pool sends `room:leadShown(agentId, shown)` (fire-and-forget) when a lead terminal
+  is attached to, detached from or disposed out of the document. Main records it only for live leads, per
+  window, and forgets a window when it closes. Showing or hiding a terminal counts as use, as do opening it
+  from the room and typing into it (`pty:write`).
+- Once a minute main stops every lead that no window shows and that had no output and no use for
+  `roomIdleMinutes`. It stops through the room's own close path, which re-checks right before the kill.
+  A lead whose project is gone is left alone. A lead still at Claude's trust prompt is stopped like any
+  other: it has no work to lose.
+- The room terminal cap offers the least recently used lead by the same use signal.
+- An archived lead drops its pooled terminal in the renderer, so a lead main stopped reopens on a clean screen.
+- Chosen over keeping the check in the renderer with a guarded stop (still blind to other windows) and over
+  documenting a single-window limit.
+- `roomPtyCap` and `roomIdleMinutes` are config-file only for now.

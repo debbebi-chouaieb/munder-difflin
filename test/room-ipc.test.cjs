@@ -486,7 +486,8 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /trustPromptGate\.release\(agentId \?\? id\);/);
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);
   assert.match(src, /trustPending: trustPromptGate\.blocks\(agentId\)/);
-  assert.match(src, /registerRoomIpc\(createRoomHandlers\(/);
+  assert.match(src, /const roomHandlers = createRoomHandlers\(\{/);
+  assert.match(src, /registerRoomIpc\(roomHandlers\);/);
   assert.match(src, /const res = ptyManager\.kill\(agentId\);[^]*?if \(!res\.ok\) return res;\s*teardownPty\(agentId\);\s*roomWiring\.archiveLeadCard\(agentId\);/);
   const hive = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/src/hooks/useHive.ts'), 'utf8');
   assert.match(hive, /if \(control\?\.trustPending\) return \{ sent: false \};/);
@@ -550,4 +551,18 @@ test('cap: two opens at once with one slot left: the first opens, only the secon
   assert.equal(a.ok, true);
   assert.equal(b.ok, false);
   assert.equal(calls.spawn.length, 1);
+});
+
+test('close: the idle re-check runs right before the kill; false leaves the lead running', async () => {
+  const { d, calls } = deps({ running: ['lead--app'] });
+  const h = createRoomHandlers(d);
+  assert.deepEqual(await h.closeTerminal('app', () => false), { ok: false, error: 'busy' });
+  assert.deepEqual(calls.kill, []);
+  assert.deepEqual(await h.closeTerminal('app', () => true), { ok: true, done: true });
+  assert.deepEqual(calls.kill, ['lead--app']);
+});
+
+test('wiring: room:closeTerminal from IPC never passes a guard', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/roomIpc.ts'), 'utf8');
+  assert.ok(src.includes("ipcMain.handle('room:closeTerminal', (_evt, projectId: unknown) => handlers.closeTerminal(projectId));"));
 });

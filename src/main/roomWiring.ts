@@ -62,6 +62,14 @@ export interface RoomWiring {
   touchLead: (agentId: string) => void;
   /** Epoch ms of the last use, or 0 when never seen since the app started. */
   leadLastUsed: (agentId: string) => number;
+  /**
+   * A window put the lead's terminal on screen or took it off. Both count as use,
+   * so an idle clock starts when the terminal leaves the screen. A closed window
+   * shows nothing any more.
+   */
+  setLeadShown: (agentId: string, window: WebContents, shown: boolean) => void;
+  /** Whether any window shows this lead's terminal now. */
+  isLeadShown: (agentId: string) => boolean;
   /** Records the window that opened a lead, so its archive goes where its card was made. */
   ownLead: (agentId: string, owner: WebContents) => void;
   leadWindow: (agentId: string) => WebContents | null;
@@ -74,6 +82,9 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
   const leadOwners = new Map<string, WebContents>();
   // One entry per lead id that was ever used, so bounded by the project count.
   const leadUsedAt = new Map<string, number>();
+  // Lead id to the ids of the windows showing its terminal; only live leads get in (see index.ts).
+  const shownIn = new Map<string, Set<number>>();
+  const watchedWindows = new Set<number>();
   const now = deps.now ?? Date.now;
 
   const readClaudeConfig = async (): Promise<unknown> => {
@@ -216,6 +227,30 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
 
     leadLastUsed(agentId) {
       return leadUsedAt.get(agentId) ?? 0;
+    },
+
+    setLeadShown(agentId, window, shown) {
+      leadUsedAt.set(agentId, now());
+      const windows = shownIn.get(agentId) ?? new Set<number>();
+      if (shown) windows.add(window.id);
+      else windows.delete(window.id);
+      if (windows.size > 0) shownIn.set(agentId, windows);
+      else shownIn.delete(agentId);
+      if (shown && !watchedWindows.has(window.id)) {
+        const id = window.id;
+        watchedWindows.add(id);
+        window.once('destroyed', () => {
+          watchedWindows.delete(id);
+          for (const [lead, set] of shownIn) {
+            set.delete(id);
+            if (set.size === 0) shownIn.delete(lead);
+          }
+        });
+      }
+    },
+
+    isLeadShown(agentId) {
+      return (shownIn.get(agentId)?.size ?? 0) > 0;
     },
 
     ownLead(agentId, owner) {

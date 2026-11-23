@@ -20,7 +20,8 @@ import { bridgeOf, providerPreset } from '../../../shared/agentProvider';
 import { isDurableRole, preferredAgentRole, roleForHiveSpawn } from '../../../shared/agentRole';
 import { inboxNudgeText } from '../../../shared/hiveNudge';
 import { resolveGodName } from '../../../shared/godIdentity';
-import { acquireTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
+import { acquireTerminal, disposeTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
+import { isLeadAgentId } from '@shared/roomLead';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
 import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/scene/office/cast';
 
@@ -1057,7 +1058,10 @@ export function useHive(config: HarnessConfig | null): void {
       useStore.getState().addAgent(agent);
     });
     const offArchive = window.cth.onHiveAgentArchived?.((e) => {
-      if (e?.id) useStore.getState().archiveAgent(e.id);
+      if (!e?.id) return;
+      useStore.getState().archiveAgent(e.id);
+      // A lead main stopped (idle, or Stop in another window) must not reopen on its old screen.
+      if (isLeadAgentId(e.id)) disposeTerminal(e.id);
     });
     return () => { offSpawn?.(); offArchive?.(); };
   }, [config?.onboardingComplete]);

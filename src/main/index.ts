@@ -37,8 +37,9 @@ import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessio
 import { SessionLister } from './projectSessions';
 import { readRoomTickets } from './projectTickets';
 import { createRoomHandlers, registerRoomIpc } from './roomIpc';
-import { isLeadAgentId, leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
-import { roomPtyCap } from '../shared/roomLimits';
+import { isLeadAgentId, leadAgentIdFor, leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
+import { roomIdleMinutes, roomPtyCap } from '../shared/roomLimits';
+import { createRoomIdleSweeper } from './roomIdle';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
 import type { Project, StoredProjectPatch } from '../shared/project';
@@ -4595,7 +4596,7 @@ const roomWiring = createRoomWiring({
   patchProject: patchProjectForRoom,
   log: (line) => console.error(line)
 });
-registerRoomIpc(createRoomHandlers({
+const roomHandlers = createRoomHandlers({
   projects: async () => (await projectService.current()).projects,
   claudeTrusts: roomWiring.claudeTrustsFolder,
   resolveProjectCwd: roomWiring.resolveProjectCwd,
@@ -4631,7 +4632,30 @@ registerRoomIpc(createRoomHandlers({
   touchLead: roomWiring.touchLead,
   leadLastUsed: roomWiring.leadLastUsed,
   log: (line) => console.error(line)
-}));
+});
+registerRoomIpc(roomHandlers);
+// A window says when a room lead's terminal goes on or off its screen (ADR 0005,
+// amended 2026-11-23). Only live leads are recorded, so the map stays bounded.
+ipcMain.on('room:leadShown', (evt, agentId: unknown, shown: unknown) => {
+  if (typeof agentId !== 'string' || !isLeadAgentId(agentId) || typeof shown !== 'boolean') return;
+  if (shown && !ptyManager.has(agentId)) return;
+  roomWiring.setLeadShown(agentId, evt.sender, shown);
+});
+// Leads no window shows, with no output or input for roomIdleMinutes, stop like Stop does.
+createRoomIdleSweeper({
+  idleMinutes: () => roomIdleMinutes(readConfig().roomIdleMinutes),
+  liveLeads: () => ptyManager.list().filter((p) => isLeadAgentId(p.id)),
+  isShown: roomWiring.isLeadShown,
+  lastUsed: roomWiring.leadLastUsed,
+  stop: async (agentId, stillIdle) => {
+    const project = (await projectService.current()).projects.find((p) => leadAgentIdFor(p) === agentId);
+    // A lead whose project is gone can only be stopped from its card.
+    if (!project) return false;
+    const res = await roomHandlers.closeTerminal(project.id, stillIdle);
+    return res.ok;
+  },
+  log: (line) => console.error(line)
+}).start(60_000);
 
 // ─── IPC: Realtime Michael voice ACTIONS (rt-5, Phase 2) ─────────────────────
 // Thin adapters over the SAME main fns the god PTY already uses. ALL of the safety
