@@ -1519,11 +1519,25 @@
         "no-line": "This project's CLAUDE.md has no \"Local open work:\" line.",
         "unavailable": "The local work file is missing or outside the project.",
         "unreadable": "The local work file could not be read."
+      },
+      "showZetahub": "ZetaHub",
+      "col": {
+        "todo": "TO DO",
+        "doing": "IN PROGRESS",
+        "review": "REVIEW",
+        "other": "OTHER",
+        "high": "HIGH",
+        "normal": "NORMAL"
       }
     },
     "terminal": {
       "starting": "Starting the lead…",
       "stop": "Stop lead"
-    }
+    },
+    "lists": {
+      "hide": "Hide lists",
+      "show": "Show lists"
+    },
+    "splitter": "Drag to resize the terminal · double-click to hide or show the lists"
   }
 }

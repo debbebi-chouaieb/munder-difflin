@@ -13,7 +13,7 @@ const loadTs = require('./load-ts.cjs');
 
 const t = loadTs('src/shared/ticketSources.ts');
 const { parseLocalWorkPath } = loadTs('src/shared/project.ts');
-const { readZetahubTable, readLocalTable, zetahubCacheDir } = loadTs('src/main/projectTickets.ts');
+const { readRoomTickets, readZetahubTable, readLocalTable, zetahubCacheDir } = loadTs('src/main/projectTickets.ts');
 
 const line = (o) => JSON.stringify(o);
 const noLog = () => {};
@@ -180,4 +180,18 @@ test('local table: a link inside the project is refused, not followed', async (t
     return;
   }
   assert.deepEqual(await readLocalTable(dir, 'up/secret.md', noLog), { ok: false, reason: 'unavailable' });
+});
+
+test('room tickets: a hidden ZetaHub section reads no cache; auto follows the key', async () => {
+  const dir = cache();
+  const { dir: proj } = project();
+  const base = { path: proj, zetahubKey: 'MCX-ANDR', localWorkPath: 'docs/open.md' };
+  const hidden = await readRoomTickets({ ...base, showZetahub: false }, noLog, dir);
+  assert.deepEqual(hidden.zetahub, { ok: false, key: 'MCX-ANDR', reason: 'hidden' });
+  assert.equal(hidden.local.ok, true, 'local items are still read');
+  assert.equal((await readRoomTickets({ ...base, showZetahub: null }, noLog, dir)).zetahub.ok, true);
+  const localOnly = await readRoomTickets({ ...base, zetahubKey: null, showZetahub: null }, noLog, dir);
+  assert.equal(localOnly.zetahub.reason, 'hidden', 'no key and no choice: a local-only project shows no ZetaHub');
+  const forced = await readRoomTickets({ ...base, zetahubKey: null, showZetahub: true }, noLog, dir);
+  assert.equal(forced.zetahub.reason, 'no-key', 'turned on without a key: the hint says why it is empty');
 });

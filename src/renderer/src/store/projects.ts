@@ -37,6 +37,8 @@ interface ProjectsState {
   setEnabled: (id: string, enabled: boolean) => Promise<void>;
   setParallel: (id: string, parallel: boolean) => Promise<void>;
   setZetahubKey: (id: string, key: string | null) => Promise<void>;
+  /** The room's ZetaHub section on or off; null returns it to auto. */
+  setShowZetahub: (id: string, show: boolean | null) => Promise<void>;
 }
 
 function readBool(key: string): boolean {
@@ -104,6 +106,7 @@ export const useProjects = create<ProjectsState>((set) => {
     rescan: () => apply(async () => ({ ok: true, snapshot: await window.cth.rescanProjects() })),
     setEnabled: (id, enabled) => apply(() => window.cth.setProjectEnabled(id, enabled)),
     setParallel: (id, parallel) => apply(() => window.cth.setProjectParallel(id, parallel)),
-    setZetahubKey: (id, key) => apply(() => window.cth.setProjectZetahubKey(id, key))
+    setZetahubKey: (id, key) => apply(() => window.cth.setProjectZetahubKey(id, key)),
+    setShowZetahub: (id, show) => apply(() => window.cth.setProjectShowZetahub(id, show))
   };
 });

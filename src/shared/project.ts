@@ -21,11 +21,14 @@ export interface StoredProject {
    * folder (slug collision, folder removed) does not carry trust with it.
    */
   trustedPath?: string;
+  /** Room ZetaHub section on or off (ADR 0005); absent: shown when the project has a key. */
+  showZetahub?: boolean;
 }
 
-/** A change to one project. `zetahubKey: null` removes the user-set key. */
-export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath'>> & {
+/** A change to one project. `zetahubKey: null` removes the user-set key; `showZetahub: null` returns to auto. */
+export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'showZetahub'>> & {
   zetahubKey?: string | null;
+  showZetahub?: boolean | null;
   /** Null removes trust. */
   trustedPath?: string | null;
 };
@@ -65,6 +68,8 @@ export interface Project {
   trusted: boolean;
   /** Relative path from the "Local open work:" line of CLAUDE.md (ADR 0005), or null. */
   localWorkPath: string | null;
+  /** The user's choice for the room ZetaHub section; null: auto (see `zetahubShown`). */
+  showZetahub: boolean | null;
 }
 
 export interface ProjectsSnapshot {
@@ -206,9 +211,18 @@ export function mergeProjects(folders: ProjectFolder[], stored: ProjectsFile): P
         agents: agentNamesFrom(folder.agentFiles),
         leadAgentId: saved?.leadAgentId ?? null,
         trusted: !!saved?.trustedPath && samePath(saved.trustedPath, folder.path),
-        localWorkPath: parseLocalWorkPath(folder.claudeMd)
+        localWorkPath: parseLocalWorkPath(folder.claudeMd),
+        showZetahub: typeof saved?.showZetahub === 'boolean' ? saved.showZetahub : null
       };
     });
+}
+
+/**
+ * Whether a project's room shows the ZetaHub section: the user's choice, else
+ * only when the project has a ZetaHub key (a local-only project shows no ZetaHub).
+ */
+export function zetahubShown(project: Pick<Project, 'showZetahub' | 'zetahubKey'>): boolean {
+  return project.showZetahub ?? project.zetahubKey !== null;
 }
 
 /** Tolerant read of parsed `projects.json`: malformed entries are dropped. */
@@ -225,7 +239,8 @@ export function parseProjectsFile(raw: unknown): ProjectsFile {
       parallel: v.parallel === true,
       ...(typeof v.zetahubKey === 'string' && isValidZetahubKey(v.zetahubKey) ? { zetahubKey: v.zetahubKey } : {}),
       ...(typeof v.leadAgentId === 'string' && v.leadAgentId ? { leadAgentId: v.leadAgentId } : {}),
-      ...(typeof v.trustedPath === 'string' && v.trustedPath && v.trustedPath.length <= MAX_TRUSTED_PATH ? { trustedPath: v.trustedPath } : {})
+      ...(typeof v.trustedPath === 'string' && v.trustedPath && v.trustedPath.length <= MAX_TRUSTED_PATH ? { trustedPath: v.trustedPath } : {}),
+      ...(typeof v.showZetahub === 'boolean' ? { showZetahub: v.showZetahub } : {})
     };
   }
   return file;
@@ -272,6 +287,8 @@ export function patchStoredProject(file: ProjectsFile, id: string, patch: Stored
   else if (typeof patch.trustedPath === 'string' && patch.trustedPath && patch.trustedPath.length <= MAX_TRUSTED_PATH) {
     next.trustedPath = patch.trustedPath;
   }
+  if (patch.showZetahub === null) delete next.showZetahub;
+  else if (typeof patch.showZetahub === 'boolean') next.showZetahub = patch.showZetahub;
   const projects: Record<string, StoredProject> = Object.assign(Object.create(null), file.projects);
   projects[id] = next;
   return { version: 1, projects };

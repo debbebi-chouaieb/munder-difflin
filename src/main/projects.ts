@@ -327,6 +327,9 @@ export function registerProjectsIpc(service: ProjectService): void {
     typeof enabled === 'boolean' ? service.patch(id, { enabled }) : { ok: false, error: 'invalid value' });
   ipcMain.handle('projects:setParallel', (_evt, id: unknown, parallel: unknown): ProjectResult =>
     typeof parallel === 'boolean' ? service.patch(id, { parallel }) : { ok: false, error: 'invalid value' });
+  // null returns the room's ZetaHub section to auto (shown when the project has a key).
+  ipcMain.handle('projects:setShowZetahub', (_evt, id: unknown, show: unknown): ProjectResult =>
+    typeof show === 'boolean' || show === null ? service.patch(id, { showZetahub: show }) : { ok: false, error: 'invalid value' });
   ipcMain.handle('projects:setZetahubKey', (_evt, id: unknown, key: unknown): ProjectResult => {
     const normalized = normalizeZetahubKey(key);
     return normalized.ok ? service.patch(id, { zetahubKey: normalized.key }) : { ok: false, error: 'invalid ZetaHub key' };

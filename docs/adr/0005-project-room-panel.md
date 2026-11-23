@@ -129,3 +129,17 @@ We chose **A**, reading ZetaHub from the cache.
   panel away.
 - Follow-ups: no UI revokes `trustedPath` yet; `killLead` archives the card even when the kill failed; lead
   trust is keyed by agent id, not checked against the spawn cwd.
+
+## Amendment, 2026-11-21 (local-only projects, task columns, terminal split)
+- A project can be used without ZetaHub. `projects.json` gains an optional `showZetahub` per project; absent means
+  auto: the ZetaHub section shows only when the project has a ZetaHub key. A "ZetaHub" checkbox in the room header
+  sets it; a choice equal to auto is stored as absent, so the project follows its key again. The renderer sets it
+  through `projects:setShowZetahub(id, boolean | null)`, like the other project toggles. Chosen over "auto only"
+  (a project with a key could not hide it) and a global setting (a mixed workspace could not be served).
+- When the section is off, main reads no ZetaHub cache and `room:tickets` answers `zetahub: { ok: false, reason:
+  'hidden' }`. The panel leaves the section out, and the wall board shows no ZetaHub count.
+- Tasks render as kanban columns, like the Tasks board: ZetaHub by status (To Do, In Progress, Review; Other only
+  when a status fits none), then local items by `HIGH:` or not, since local bullets carry no status.
+- With a lead running, a drag handle splits the lists from the terminal. Dragging it to the top, a double click or
+  "Hide lists" gives the terminal the whole panel; the terminal keeps at least 120 px. The split is kept in memory
+  for the app session and shared by every room.

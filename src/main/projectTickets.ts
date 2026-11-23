@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { isLocalAbsolute, isNetworkPath, isWithinRoots } from './rootGuard';
 import { cleanText } from '../shared/untrustedText';
+import { zetahubShown, type Project } from '../shared/project';
 import {
   cacheFileStem,
   parseLabelMap,
@@ -21,11 +22,7 @@ import {
 const MAX_CACHE_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_LOCAL_FILE_BYTES = 1024 * 1024;
 
-export interface TicketProject {
-  path: string;
-  zetahubKey: string | null;
-  localWorkPath: string | null;
-}
+export type TicketProject = Pick<Project, 'path' | 'zetahubKey' | 'localWorkPath' | 'showZetahub'>;
 
 type Log = (line: string) => void;
 
@@ -37,8 +34,11 @@ export function zetahubCacheDir(env: NodeJS.ProcessEnv = process.env, home = os.
 }
 
 export async function readRoomTickets(project: TicketProject, log: Log, cacheDir: string = zetahubCacheDir()): Promise<RoomTickets> {
+  // A hidden section reads nothing, so its wall board shows no count either.
   const [zetahub, local] = await Promise.all([
-    readZetahubTable(project.zetahubKey, cacheDir, log),
+    zetahubShown(project)
+      ? readZetahubTable(project.zetahubKey, cacheDir, log)
+      : Promise.resolve<ZetahubTable>({ ok: false, key: project.zetahubKey, reason: 'hidden' }),
     readLocalTable(project.path, project.localWorkPath, log)
   ]);
   return { zetahub, local };

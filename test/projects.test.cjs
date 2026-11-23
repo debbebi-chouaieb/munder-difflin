@@ -411,3 +411,27 @@ test('local open work path is read at scan time', () => {
   const [p] = shared.mergeProjects([folder('App', { claudeMd: 'Local open work: `docs/in-progress.md`' })], { version: 1, projects: {} });
   assert.equal(p.localWorkPath, 'docs/in-progress.md');
 });
+
+// ─── room ZetaHub section (ADR 0005) ────────────────────────────────────────
+
+test('show ZetaHub: auto by default; the file keeps only a boolean; patch null returns to auto', () => {
+  const [auto] = shared.mergeProjects([folder('App')], { version: 1, projects: {} });
+  assert.equal(auto.showZetahub, null);
+  for (const bad of ['yes', 1, null, {}]) {
+    const file = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, showZetahub: bad } } });
+    assert.equal('showZetahub' in file.projects.app, false, String(bad));
+  }
+  const off = shared.patchStoredProject({ version: 1, projects: {} }, 'app', { showZetahub: false });
+  assert.equal(off.projects.app.showZetahub, false);
+  const [merged] = shared.mergeProjects([folder('App')], shared.parseProjectsFile(off));
+  assert.equal(merged.showZetahub, false);
+  assert.equal(shared.patchStoredProject(off, 'app', {}).projects.app.showZetahub, false);
+  assert.equal('showZetahub' in shared.patchStoredProject(off, 'app', { showZetahub: null }).projects.app, false);
+});
+
+test('show ZetaHub: the choice wins, else shown only with a key', () => {
+  assert.equal(shared.zetahubShown({ showZetahub: null, zetahubKey: 'APP' }), true);
+  assert.equal(shared.zetahubShown({ showZetahub: null, zetahubKey: null }), false);
+  assert.equal(shared.zetahubShown({ showZetahub: false, zetahubKey: 'APP' }), false);
+  assert.equal(shared.zetahubShown({ showZetahub: true, zetahubKey: null }), true);
+});

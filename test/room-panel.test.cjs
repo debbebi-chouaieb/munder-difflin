@@ -114,6 +114,7 @@ test('every room string the panel uses exists in every language', () => {
   // Keys built from a reason: the reasons ZetahubTable and LocalTable allow (src/shared/ticketSources.ts).
   for (const r of ['no-key', 'no-cache', 'not-cached', 'unreadable']) keys.add(`room.tickets.zetahubReason.${r}`);
   for (const r of ['no-line', 'unavailable', 'unreadable']) keys.add(`room.tickets.localReason.${r}`);
+  for (const col of [...model.zetahubColumns([{ status: '?' }]), ...model.localColumns([])]) keys.add(col.labelKey);
   for (const k of ['untrusted', 'untrustedButClaudeTrusts']) keys.add(`room.trust.${k}`);
   assert.ok(keys.size > 40, `found ${keys.size} keys`);
   for (const [code, tree] of LOCALES) {
@@ -167,6 +168,8 @@ test('board counts come from each source, null when it is not set up', () => {
   assert.deepEqual(counts.boardCounts(tickets), { zetahub: 7, local: null });
   assert.equal(counts.sameBoardCounts({ zetahub: 7, local: null }, { zetahub: 7, local: null }), true);
   assert.equal(counts.sameBoardCounts(undefined, { zetahub: 0, local: 0 }), false);
+  const hidden = { ...tickets, zetahub: { ok: false, key: 'APP', reason: 'hidden' } };
+  assert.equal(counts.boardCounts(hidden).zetahub, null, 'a hidden ZetaHub section draws no count');
 });
 
 test('room store: unchanged counts keep the same object; a failed read keeps the old count and is logged', async () => {
@@ -282,4 +285,62 @@ test('the floor destroys the room boards with the scene and keeps counts fresh',
   const floor = read('src/renderer/src/scene/office/OfficeFloor.tsx');
   assert.match(floor, /\(a as any\)\.__roomBoards\?\.destroy\(\)/);
   assert.match(floor, /useRoomBoardCounts\(projectFloor\.active\)/);
+});
+
+// ── task columns and splitter ────────────────────────────────────────────────
+
+test('ZetaHub columns: by status in cache order; Other only when a status fits none', () => {
+  const rows = [
+    { key: 'A-1', status: 'In Progress' }, { key: 'A-2', status: 'To Do' },
+    { key: 'A-3', status: 'Ready for testing' }, { key: 'A-4', status: 'To Do' }, { key: 'A-5', status: 'Waiting for review' }
+  ];
+  const cols = model.zetahubColumns(rows);
+  assert.deepEqual(cols.map((c) => [c.id, c.items.map((r) => r.key)]), [
+    ['todo', ['A-2', 'A-4']], ['doing', ['A-1']], ['review', ['A-3', 'A-5']]
+  ]);
+  assert.deepEqual(model.zetahubColumns([]).map((c) => c.items.length), [0, 0, 0], 'empty columns keep the board shape');
+  const other = model.zetahubColumns([{ key: 'A-6', status: 'Parked' }]);
+  assert.equal(other.at(-1).id, 'other');
+  assert.equal(other.at(-1).items[0].key, 'A-6');
+});
+
+test('local columns: HIGH items, then the rest, order kept', () => {
+  const cols = model.localColumns([{ text: 'a', high: false }, { text: 'b', high: true }, { text: 'c', high: false }]);
+  assert.deepEqual(cols.map((c) => [c.id, c.items.map((i) => i.text)]), [['high', ['b']], ['normal', ['a', 'c']]]);
+});
+
+test('show ZetaHub: a click matching auto is stored as auto', () => {
+  assert.equal(model.showZetahubSetting(true, true), null);
+  assert.equal(model.showZetahubSetting(false, false), null);
+  assert.equal(model.showZetahubSetting(false, true), false);
+  assert.equal(model.showZetahubSetting(true, false), true);
+});
+
+test('room splitter: the lists can shrink to 0; the terminal keeps its minimum', () => {
+  const min = model.ROOM_TERMINAL_MIN_HEIGHT;
+  assert.equal(model.nextRoomTopHeight(200, -500, 600), 0);
+  assert.equal(model.nextRoomTopHeight(200, 50, 600), 250);
+  assert.equal(model.nextRoomTopHeight(200, 900, 600), 600 - min);
+  assert.equal(model.nextRoomTopHeight(200, 0, 50), 0, 'a panel shorter than the minimum gives the terminal everything');
+});
+
+test('the ZetaHub section is left out when main hid it', () => {
+  const columns = read(`${ROOM_DIR}/RoomTaskColumns.tsx`);
+  assert.match(columns, /reason === 'hidden'/);
+  assert.match(read(`${ROOM_DIR}/RoomPanel.tsx`), /\[reload, projectShown, showZetahub\]/, 'a toggle re-reads the tickets');
+});
+
+test('room store: hiding the lists remembers their height; showing restores it', () => {
+  const { useRoomPanel } = loadTs('src/renderer/src/store/roomPanel.ts');
+  const st = () => useRoomPanel.getState();
+  st().toggleLists(0);
+  assert.equal(st().topHeight, null, 'never opened: show uses the default split');
+  st().setTopHeight(260);
+  st().toggleLists(260);
+  assert.equal(st().topHeight, 0);
+  st().toggleLists(0);
+  assert.equal(st().topHeight, 260);
+  st().setTopHeight(0);
+  st().toggleLists(0);
+  assert.equal(st().topHeight, 260, 'dragged shut: show returns to the last open height');
 });

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { leadAgentIdFor, type OpenTerminalRequest } from '@shared/roomLead';
 import type { SessionSummary } from '@shared/sessionList';
 import type { RoomTickets } from '@shared/ticketSources';
 import { cleanText } from '@shared/untrustedText';
+import { zetahubShown } from '@shared/project';
 import { PixelPanel } from '../PixelPanel';
 import { PixelButton } from '../PixelButton';
 import { Icon } from '../Icon';
@@ -13,15 +14,21 @@ import { useProjects } from '@/store/projects';
 import { useRoomPanel } from '@/store/roomPanel';
 import { boardCounts } from '@/store/roomBoardCounts';
 import { RoomSessionList } from './RoomSessionList';
-import { RoomTaskTables } from './RoomTaskTables';
+import { RoomTaskColumns } from './RoomTaskColumns';
+import { RoomSplitter } from './RoomSplitter';
 import { RoomLargeSessionDialog, RoomTrustDialog } from './RoomDialogs';
 import { LeadTerminal } from './LeadTerminal';
 import { muted, warning } from './roomStyles';
-import { afterLargeAnswer, openStep, readErrorKey, roomErrorKey, withTrust, type OpenStep } from './roomPanelModel';
+import {
+  afterLargeAnswer, nextRoomTopHeight, openStep, readErrorKey, roomErrorKey, showZetahubSetting, withTrust, type OpenStep
+} from './roomPanelModel';
 
 type Question = Extract<OpenStep, { kind: 'ask-trust' | 'confirm-large' }>;
 
 const logError = (line: string): void => console.error(line);
+
+/** RoomSplitter's drawn height, taken from the body before the lists and terminal split it. */
+const SPLITTER_HEIGHT = 8;
 
 /**
  * A project room in the right panel (ADR 0005): recent sessions, the lead's
@@ -42,6 +49,11 @@ export function RoomPanel({ projectId }: { projectId: string }) {
   const projectShown = !!project;
   const leadRunning = useStore((s) => leadId !== null && s.agents.some((a) => a.id === leadId));
   const clearRoom = useRoomPanel((s) => s.clearRoom);
+  const storedTopHeight = useRoomPanel((s) => s.topHeight);
+  const setTopHeight = useRoomPanel((s) => s.setTopHeight);
+  const toggleLists = useRoomPanel((s) => s.toggleLists);
+  const setShowZetahub = useProjects((s) => s.setShowZetahub);
+  const showZetahub = project ? zetahubShown(project) : false;
 
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
@@ -75,13 +87,28 @@ export function RoomPanel({ projectId }: { projectId: string }) {
     }
   }, [load, projectId]);
 
+  // Also re-reads when the ZetaHub section is turned on or off: main reads it only when shown.
   useEffect(() => {
     if (!projectShown) return; // main refuses reads for an unticked project
     void reload();
     const onFocus = () => { void reload(); };
     window.addEventListener('focus', onFocus);
     return () => window.removeEventListener('focus', onFocus);
-  }, [reload, projectShown]);
+  }, [reload, projectShown, showZetahub]);
+
+  // The lists and the terminal share the body; its height bounds the splitter.
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const [bodyHeight, setBodyHeight] = useState(0);
+  useLayoutEffect(() => {
+    const el = bodyRef.current;
+    if (!el) return;
+    setBodyHeight(el.clientHeight);
+    const observer = new ResizeObserver(() => setBodyHeight(el.clientHeight));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [projectShown]);
+  const splitHeight = Math.max(0, bodyHeight - SPLITTER_HEIGHT);
+  const topHeight = nextRoomTopHeight(storedTopHeight ?? Math.round(splitHeight * 0.4), 0, splitHeight);
 
   const open = async (request: OpenTerminalRequest) => {
     setBusy(true);
@@ -150,31 +177,49 @@ export function RoomPanel({ projectId }: { projectId: string }) {
         <h2 dir="auto" style={{ margin: 0, flex: 1, minWidth: 0, fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'start' }}>
           {cleanText(project.name, 120) ?? project.id}
         </h2>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--cth-ink-500)', whiteSpace: 'nowrap' }}>
+          <input
+            type="checkbox"
+            checked={showZetahub}
+            onChange={(e) => void setShowZetahub(project.id, showZetahubSetting(e.target.checked, project.zetahubKey !== null))}
+          />
+          {t('room.tickets.showZetahub')}
+        </label>
+        {leadRunning && (
+          <PixelButton size="sm" variant="ghost" onClick={() => toggleLists(topHeight)}>
+            {topHeight > 0 ? t('room.lists.hide') : t('room.lists.show')}
+          </PixelButton>
+        )}
         {stopButton}
         <PixelButton size="sm" variant="ghost" onClick={clearRoom} title={t('room.close')}>
           <Icon name="x" />
         </PixelButton>
       </header>
       {noticeLine}
-      <div style={{
-        flex: leadRunning ? '0 1 auto' : 1, maxHeight: leadRunning ? '40%' : undefined, minHeight: 0, overflowY: 'auto',
-        padding: 12, display: 'flex', flexDirection: 'column', gap: 16
-      }}>
-        {/* A running lead keeps its session: main re-announces it rather than switching. */}
-        {leadRunning && <p style={muted}>{t('room.sessions.leadRunning')}</p>}
-        <RoomSessionList
-          sessions={sessions}
-          errorKey={sessionsError}
-          disabled={busy || leadRunning}
-          onOpen={(sessionId) => void open({ sessionId })}
-        />
-        <RoomTaskTables tickets={tickets} errorKey={ticketsError} />
-      </div>
-      {leadRunning && leadId && (
-        <div style={{ flex: 1, minHeight: 220, display: 'flex', flexDirection: 'column', borderTop: '1px solid var(--cth-ink-300)' }}>
-          <LeadTerminal agentId={leadId} />
+      <div ref={bodyRef} style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <div style={{
+          flex: leadRunning ? `0 0 ${topHeight}px` : 1, minHeight: 0, overflowY: 'auto',
+          padding: leadRunning && topHeight === 0 ? 0 : 12, display: 'flex', flexDirection: 'column', gap: 16
+        }}>
+          {/* A running lead keeps its session: main re-announces it rather than switching. */}
+          {leadRunning && <p style={muted}>{t('room.sessions.leadRunning')}</p>}
+          <RoomSessionList
+            sessions={sessions}
+            errorKey={sessionsError}
+            disabled={busy || leadRunning}
+            onOpen={(sessionId) => void open({ sessionId })}
+          />
+          <RoomTaskColumns tickets={tickets} errorKey={ticketsError} />
         </div>
-      )}
+        {leadRunning && leadId && (
+          <>
+            <RoomSplitter height={topHeight} panelHeight={splitHeight} onChange={setTopHeight} onToggle={() => toggleLists(topHeight)} />
+            <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+              <LeadTerminal agentId={leadId} />
+            </div>
+          </>
+        )}
+      </div>
       {question?.kind === 'ask-trust' && (
         <RoomTrustDialog
           projectName={project.name}

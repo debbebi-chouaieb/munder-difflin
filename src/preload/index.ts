@@ -649,6 +649,8 @@ const api = {
     ipcRenderer.invoke('projects:setParallel', id, parallel),
   setProjectZetahubKey: (id: string, key: string | null): Promise<ProjectResult> =>
     ipcRenderer.invoke('projects:setZetahubKey', id, key),
+  setProjectShowZetahub: (id: string, show: boolean | null): Promise<ProjectResult> =>
+    ipcRenderer.invoke('projects:setShowZetahub', id, show),
   // Project rooms (ADR 0005): every call takes a project id only.
   roomSessions: (projectId: string): Promise<RoomResult<{ sessions: SessionSummary[] }>> =>
     ipcRenderer.invoke('room:sessions', projectId),

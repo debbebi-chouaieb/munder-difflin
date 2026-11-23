@@ -18,12 +18,29 @@ export interface RoomPanelState {
   setCounts: (projectId: string, counts: BoardCounts) => void;
   /** Reads ticket counts for these projects, one call at a time. Failures keep the old count and are logged. */
   refreshCounts: (projectIds: readonly string[]) => Promise<void>;
+  /**
+   * Height in px of the room's sessions and tasks above a running lead terminal;
+   * null: the default split. 0 hides them. Shared by every room, kept for the
+   * app session only.
+   */
+  topHeight: number | null;
+  setTopHeight: (px: number | null) => void;
+  /** Last height the lists were open at, restored by a show; null: the default split. */
+  lastOpenTopHeight: number | null;
+  /** Hides the lists (remembering `shownHeight`) or shows them at the last open height. */
+  toggleLists: (shownHeight: number) => void;
 }
 
 export const useRoomPanel = create<RoomPanelState>((set, get) => ({
   selectedRoomId: null,
   selectRoom: (projectId) => set({ selectedRoomId: projectId }),
   clearRoom: () => { if (get().selectedRoomId !== null) set({ selectedRoomId: null }); },
+  topHeight: null,
+  setTopHeight: (topHeight) => set(topHeight !== null && topHeight > 0 ? { topHeight, lastOpenTopHeight: topHeight } : { topHeight }),
+  lastOpenTopHeight: null,
+  toggleLists: (shownHeight) => set(shownHeight > 0
+    ? { topHeight: 0, lastOpenTopHeight: shownHeight }
+    : { topHeight: get().lastOpenTopHeight }),
   counts: {},
   setCounts: (projectId, counts) => {
     if (!sameBoardCounts(get().counts[projectId], counts)) set((s) => ({ counts: { ...s.counts, [projectId]: counts } }));

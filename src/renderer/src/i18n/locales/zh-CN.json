@@ -1519,11 +1519,25 @@
         "no-line": "此项目的 CLAUDE.md 中没有 \"Local open work:\" 行。",
         "unavailable": "本地工作文件不存在或位于项目之外。",
         "unreadable": "无法读取本地工作文件。"
+      },
+      "showZetahub": "ZetaHub",
+      "col": {
+        "todo": "待办",
+        "doing": "进行中",
+        "review": "审核",
+        "other": "其他",
+        "high": "高",
+        "normal": "普通"
       }
     },
     "terminal": {
       "starting": "正在启动负责人…",
       "stop": "停止负责人"
-    }
+    },
+    "lists": {
+      "hide": "隐藏列表",
+      "show": "显示列表"
+    },
+    "splitter": "拖动以调整终端大小 · 双击隐藏或显示列表"
   }
 }

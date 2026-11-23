@@ -78,3 +78,61 @@ export function formatSyncedAt(syncedAt: string, locale: string): string {
   const ms = Date.parse(syncedAt);
   return Number.isNaN(ms) ? syncedAt : new Date(ms).toLocaleString(locale);
 }
+
+/** One column of a room task section, kanban style. `labelKey` is an i18n key. */
+export interface TaskColumn<T> {
+  id: string;
+  labelKey: string;
+  items: T[];
+}
+
+const ZETAHUB_STATUS_COLUMNS: ReadonlyArray<{ id: string; statuses: readonly string[] }> = [
+  { id: 'todo', statuses: ['To Do'] },
+  { id: 'doing', statuses: ['In Progress'] },
+  { id: 'review', statuses: ['Waiting for review', 'Ready for testing'] }
+];
+
+/**
+ * ZetaHub rows by status: To Do, In Progress, Review, always shown so the board
+ * keeps its shape; "Other" only when a status fits none (a workflow added later).
+ * Rows keep the cache order (priority, then number) inside a column.
+ */
+export function zetahubColumns<T extends { status: string }>(rows: readonly T[]): TaskColumn<T>[] {
+  const columns: TaskColumn<T>[] = ZETAHUB_STATUS_COLUMNS.map((c) => ({ id: c.id, labelKey: `room.tickets.col.${c.id}`, items: [] }));
+  const other: T[] = [];
+  for (const row of rows) {
+    const index = ZETAHUB_STATUS_COLUMNS.findIndex((c) => c.statuses.includes(row.status));
+    if (index >= 0) columns[index].items.push(row);
+    else other.push(row);
+  }
+  if (other.length > 0) columns.push({ id: 'other', labelKey: 'room.tickets.col.other', items: other });
+  return columns;
+}
+
+/** Local items have no status; `HIGH:` is the only grouping they carry. */
+export function localColumns<T extends { high: boolean }>(items: readonly T[]): TaskColumn<T>[] {
+  return [
+    { id: 'high', labelKey: 'room.tickets.col.high', items: items.filter((i) => i.high) },
+    { id: 'normal', labelKey: 'room.tickets.col.normal', items: items.filter((i) => !i.high) }
+  ];
+}
+
+/**
+ * The stored ZetaHub choice for a click on "Show ZetaHub": a choice that matches
+ * what auto would do is stored as null, so the project follows its key again.
+ */
+export function showZetahubSetting(show: boolean, hasZetahubKey: boolean): boolean | null {
+  return show === hasZetahubKey ? null : show;
+}
+
+/** Smallest terminal height the room splitter leaves, so the lead's prompt stays usable. */
+export const ROOM_TERMINAL_MIN_HEIGHT = 120;
+
+/**
+ * Height of the room's upper part (sessions and tasks) after a drag of the
+ * splitter above the lead terminal. 0 hides it, giving the terminal the panel.
+ */
+export function nextRoomTopHeight(startHeight: number, dragPx: number, panelHeight: number): number {
+  const max = Math.max(0, panelHeight - ROOM_TERMINAL_MIN_HEIGHT);
+  return Math.round(Math.min(max, Math.max(0, startHeight + dragPx)));
+}
