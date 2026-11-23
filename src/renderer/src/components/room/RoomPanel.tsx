@@ -93,7 +93,11 @@ export function RoomPanel({ projectId }: { projectId: string }) {
     void reload();
     const onFocus = () => { void reload(); };
     window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
+    return () => {
+      window.removeEventListener('focus', onFocus);
+      // A load still in flight belongs to a closed or changed room: drop its answer.
+      loadSeq.current++;
+    };
   }, [reload, projectShown, showZetahub]);
 
   // The lists and the terminal share the body; its height bounds the splitter.

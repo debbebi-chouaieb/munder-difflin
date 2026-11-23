@@ -190,8 +190,20 @@ test('room store: unchanged counts keep the same object; a failed read keeps the
     assert.deepEqual(after.app, { zetahub: 2, local: 1 });
     assert.deepEqual(after.web, { zetahub: 5, local: null }, 'refused read keeps the old count');
     assert.equal(warnings.length, 2);
-    await useRoomPanel.getState().refreshCounts(['app']);
+    await useRoomPanel.getState().refreshCounts(['app', 'web']);
     assert.equal(useRoomPanel.getState().counts, after, 'same counts: same object, no floor redraw');
+    await useRoomPanel.getState().refreshCounts(['app']);
+    assert.deepEqual(Object.keys(useRoomPanel.getState().counts), ['app'], 'a project no longer listed loses its count');
+    // An older refresh that answers after a newer one started is dropped.
+    let releaseOld;
+    answers.app = { ok: true, tickets: { zetahub: { ok: true, key: 'APP', rows: [], total: 9, syncedAt: null }, local: { ok: true, path: 'x', items: [], total: 9 } } };
+    globalThis.window.cth.roomTickets = (id) => new Promise((resolve) => { releaseOld = () => resolve(answers[id]); });
+    const older = useRoomPanel.getState().refreshCounts(['app']);
+    globalThis.window.cth.roomTickets = async () => ({ ok: true, tickets: { zetahub: { ok: true, key: 'APP', rows: [], total: 3, syncedAt: null }, local: { ok: true, path: 'x', items: [], total: 3 } } });
+    await useRoomPanel.getState().refreshCounts(['app']);
+    releaseOld();
+    await older;
+    assert.deepEqual(useRoomPanel.getState().counts.app, { zetahub: 3, local: 3 });
     useRoomPanel.getState().selectRoom('app');
     useRoomPanel.getState().clearRoom();
     assert.equal(useRoomPanel.getState().selectedRoomId, null);
