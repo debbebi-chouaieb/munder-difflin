@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { ensureKilled, hardKillTree } from './procKill';
 import { expandTilde } from './fs';
 import { buildPtyEnv } from './ptyEnv';
+import { createOutputBatcher, type OutputBatcher } from './ptyOutputBatcher';
 import {
   captureFromLoginShell,
   isSafeCommandName,
@@ -75,6 +76,8 @@ interface PtySession {
   /** True after the child has emitted at least one frame. Automation waits for
    *  this before typing, so startup prompts cannot outrun the TUI subscription. */
   hasOutput: boolean;
+  /** Output waiting to be sent to `owner` (ADR 0005): flushed before exit and kill. */
+  output: OutputBatcher;
 }
 
 export interface SpawnOptions {
@@ -688,7 +691,8 @@ export class PtyManager {
         lastOutputAt: Date.now(),
         hasOutput: false,
         tail: '',
-        owner
+        owner,
+        output: createOutputBatcher({ send: (data) => this.safeSend(`pty:data:${opts.id}`, data, owner) })
       };
       this.sessions.set(opts.id, session);
 
@@ -701,13 +705,15 @@ export class PtyManager {
         // Keep only the trailing window; slice AFTER appending so a single
         // oversized write still leaves us its end (the part that explains a death).
         session.tail = (session.tail + data).slice(-TAIL_MAX);
-        // Route to the session's owner window (multi-window owner routing).
-        this.safeSend(`pty:data:${opts.id}`, data, session.owner);
+        // Route to the session's owner window (multi-window owner routing), batched.
+        session.output.push(data);
       });
       proc.onExit(({ exitCode, signal }) => {
         // Stale exit from a process whose id was reclaimed (kill()+respawn) — do
         // NOT touch the live session or tell the renderer the new pty died.
         if (this.sessions.get(opts.id) !== session) return;
+        // The last frame (often the reason it died) goes out before the exit.
+        session.output.flush();
         this.safeSend(`pty:exit:${opts.id}`, { exitCode, signal }, session.owner);
         this.sessions.delete(opts.id);
         // Natural exit must run the same lifecycle teardown as an explicit kill.
@@ -776,6 +782,8 @@ export class PtyManager {
     if (!s) return { ok: false, error: `no pty: ${id}` };
     try {
       const pid = s.proc.pid;
+      // Before the session goes: later output of this process is dropped by the identity guard.
+      s.output.flush();
       s.proc.kill();
       ensureKilled(pid); // verify + sweep the process group so no PID leaks
       this.sessions.delete(id);
