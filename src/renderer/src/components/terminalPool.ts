@@ -121,8 +121,9 @@ function notifyThemeChange(ptyId: string, theme: 'light' | 'dark'): void {
   window.cth.writePty(ptyId, `\x1b[?997;${theme === 'dark' ? 1 : 2}n`);
 }
 
-/** Get (or lazily create) the persistent terminal for a pty. Theme/font are
- *  only used at creation; an attaching view re-applies its own afterwards. */
+/** Scrollback of every pooled terminal except room leads (ADR 0005). */
+const DEFAULT_SCROLLBACK_LINES = 100_000;
+
 /** Whether this pty's terminal is in the document now (some view shows it). */
 export function isTerminalOnScreen(ptyId: string): boolean {
   return pool.get(ptyId)?.host.isConnected === true;
@@ -130,9 +131,11 @@ export function isTerminalOnScreen(ptyId: string): boolean {
 
 /** Lines a pooled terminal keeps. A room lead's pty id is its lead id. */
 export function terminalScrollback(ptyId: string): number {
-  return isLeadAgentId(ptyId) ? ROOM_SCROLLBACK_LINES : 100000;
+  return isLeadAgentId(ptyId) ? ROOM_SCROLLBACK_LINES : DEFAULT_SCROLLBACK_LINES;
 }
 
+/** Get (or lazily create) the persistent terminal for a pty. Theme/font are
+ *  only used at creation; an attaching view re-applies its own afterwards. */
 export function acquireTerminal(ptyId: string, theme?: ThemeMap, fontSize = 14): TerminalEntry {
   const existing = pool.get(ptyId);
   if (existing) return existing;

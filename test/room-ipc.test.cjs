@@ -541,3 +541,13 @@ test('cap: opens still in flight count, and with no live lead to offer the answe
   release();
   assert.equal((await first).ok, true);
 });
+
+test('cap: two opens at once with one slot left: the first opens, only the second is refused', async () => {
+  const { d, calls } = deps({ cap: 1 });
+  d.projects = async () => [PROJECT, ...OTHERS];
+  const h = createRoomHandlers(d);
+  const [a, b] = await Promise.all([h.openTerminal('web', null, null), h.openTerminal('app', null, null)]);
+  assert.equal(a.ok, true);
+  assert.equal(b.ok, false);
+  assert.equal(calls.spawn.length, 1);
+});

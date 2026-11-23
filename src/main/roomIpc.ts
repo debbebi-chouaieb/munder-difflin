@@ -139,7 +139,10 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     const live = deps.liveLeadIds()
       .map((id) => projects.find((p) => leadAgentIdFor(p) === id))
       .filter((p): p is Project => p !== undefined && p.id !== project.id);
-    const inFlight = [...opening.keys()].filter((id) => id !== project.id && !live.some((p) => p.id === id)).length;
+    // Only opens that started earlier count, so two opens at once do not both refuse.
+    const queued = [...opening.keys()];
+    const self = queued.indexOf(project.id);
+    const inFlight = (self < 0 ? queued : queued.slice(0, self)).filter((id) => !live.some((p) => p.id === id)).length;
     if (live.length + inFlight < cap) return null;
     const lru = live.reduce<Project | null>((best, p) =>
       !best || deps.leadLastUsed(leadAgentIdFor(p)) < deps.leadLastUsed(leadAgentIdFor(best)) ? p : best, null);

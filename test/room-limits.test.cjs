@@ -29,7 +29,8 @@ test('scrollback: room leads keep 10 000 lines, other terminals the pool default
   assert.equal(limits.ROOM_SCROLLBACK_LINES, 10_000);
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/src/components/terminalPool.ts'), 'utf8');
   assert.match(src, /scrollback: terminalScrollback\(ptyId\),/);
-  assert.match(src, /return isLeadAgentId\(ptyId\) \? ROOM_SCROLLBACK_LINES : 100000;/);
+  assert.match(src, /return isLeadAgentId\(ptyId\) \? ROOM_SCROLLBACK_LINES : DEFAULT_SCROLLBACK_LINES;/);
+  assert.match(src, /const DEFAULT_SCROLLBACK_LINES = 100_000;/);
 });
 
 test('idle: only hidden room leads silent past the limit stop; 0 minutes stops nothing', () => {
