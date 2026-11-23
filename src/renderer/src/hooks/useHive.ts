@@ -750,15 +750,17 @@ export function useHive(config: HarnessConfig | null): void {
         bootGraceUntil.current[a.id] = Date.now() + BOOT_GRACE_MS;
         // Clear the record now so it isn't re-seen (the ref also guards) or persisted.
         updateAgent(a.id, { seedPrompt: undefined });
-        setTimeout(() => {
+        setTimeout(async () => {
           // Permission-prompt safety (#5): if the worker surfaced an approval /
           // needs-human prompt while its TUI booted ('waiting'/'blocked'), the
           // seed's trailing Enter would confirm it. Put the seed back and let a
           // later tick retry once the prompt clears; if the agent vanished
           // (killed mid-boot), don't type into its orphaned pty at all.
+          // A lead at Claude's trust prompt (ADR 0005) shows no status, only the gate.
+          const control = await window.cth.controlSnapshot(a.id).catch(() => null);
           const live = useStore.getState().agents.find((x) => x.id === a.id);
           if (!live) return;
-          if (live.status === 'waiting' || live.status === 'blocked') {
+          if (live.status === 'waiting' || live.status === 'blocked' || control?.trustPending !== false) {
             seeded.current.delete(a.id);
             useStore.getState().updateAgent(a.id, { seedPrompt: seed });
             return;

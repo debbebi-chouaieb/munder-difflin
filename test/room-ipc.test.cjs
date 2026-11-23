@@ -454,4 +454,6 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /const res = ptyManager\.kill\(agentId\);[^]*?if \(!res\.ok\) return res;\s*teardownPty\(agentId\);\s*roomWiring\.archiveLeadCard\(agentId\);/);
   const hive = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/src/hooks/useHive.ts'), 'utf8');
   assert.match(hive, /if \(control\?\.trustPending\) return \{ sent: false \};/);
+  // The seed prompt waits for the gate too, and an unknown gate state counts as closed.
+  assert.match(hive, /live\.status === 'blocked' \|\| control\?\.trustPending !== false\) \{\s*seeded\.current\.delete\(a\.id\);/);
 });
