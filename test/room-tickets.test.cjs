@@ -182,6 +182,23 @@ test('local table: a link inside the project is refused, not followed', async (t
   assert.deepEqual(await readLocalTable(dir, 'up/secret.md', noLog), { ok: false, reason: 'unavailable' });
 });
 
+test('local table: a file over the size cap is not read', async () => {
+  const { dir } = project();
+  fs.writeFileSync(path.join(dir, 'docs', 'big.md'), Buffer.alloc(1024 * 1024 + 1, 0x61));
+  assert.deepEqual(await readLocalTable(dir, 'docs/big.md', noLog), { ok: false, reason: 'unreadable' });
+});
+
+test('local table: a file link as the last segment is refused, not followed', async (t2) => {
+  const { root, dir } = project();
+  try {
+    fs.symlinkSync(path.join(root, 'secret.md'), path.join(dir, 'docs', 'link.md'), 'file');
+  } catch (e) {
+    t2.skip(`cannot create a file link here: ${e.code}`);
+    return;
+  }
+  assert.deepEqual(await readLocalTable(dir, 'docs/link.md', noLog), { ok: false, reason: 'unavailable' });
+});
+
 test('room tickets: a hidden ZetaHub section reads no cache; auto follows the key', async () => {
   const dir = cache();
   const { dir: proj } = project();

@@ -109,8 +109,11 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     async tickets(projectId) {
       const project = await findProject(projectId, true);
       if (!project) return { ok: false, error: 'unknown-project' };
+      // The local table is read from inside the folder: only a plain folder in the workspace.
+      const cwd = await deps.resolveProjectCwd(project.path);
+      if (!cwd) return { ok: false, error: 'project-moved' };
       try {
-        return { ok: true, tickets: await deps.tickets(project) };
+        return { ok: true, tickets: await deps.tickets({ ...project, path: cwd }) };
       } catch (e) {
         deps.log(`[room] tickets failed for ${project.id}: ${errText(e)}`);
         return { ok: false, error: 'read-failed' };

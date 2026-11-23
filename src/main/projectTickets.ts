@@ -2,7 +2,8 @@
 // the zetahub-sync cache under ~/.claude, and the project's local open-work file.
 // Every path is built here from the project record; nothing comes from the renderer.
 
-import { lstat, readFile, realpath, stat } from 'node:fs/promises';
+import { constants as fsConstants } from 'node:fs';
+import { lstat, open, readFile, realpath, stat, type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { isLocalAbsolute, isNetworkPath, isWithinRoots } from './rootGuard';
@@ -88,16 +89,25 @@ export async function readLocalTable(projectPath: string, rel: string | null, lo
     }
     const last = i === segments.length - 1;
     if (info.isSymbolicLink() || (last ? !info.isFile() : !info.isDirectory())) return { ok: false, reason: 'unavailable' };
-    if (last && info.size > MAX_LOCAL_FILE_BYTES) return { ok: false, reason: 'unreadable' };
   }
   let text: string;
+  let file: FileHandle | undefined;
   try {
-    text = await readFile(target, 'utf8');
-    // A link swapped in after the walk would have been followed by readFile: check where it really was.
+    // A link swapped in after the walk: O_NOFOLLOW refuses it where the OS has
+    // it, and the handle is checked before a byte is read, so nothing outside the
+    // project is ever read. Windows has no O_NOFOLLOW, so the open itself may
+    // still touch a swapped-in share; the walk above keeps that window short.
+    file = await open(target, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    const info = await file.stat();
+    if (!info.isFile()) return { ok: false, reason: 'unavailable' };
+    if (info.size > MAX_LOCAL_FILE_BYTES) return { ok: false, reason: 'unreadable' };
     if (!isWithinRoots(await realpath(target), [await realpath(projectPath)])) return { ok: false, reason: 'unavailable' };
+    text = await file.readFile('utf8');
   } catch (e) {
     log(`[room] local work file read failed: ${errText(e)}`);
     return { ok: false, reason: 'unreadable' };
+  } finally {
+    await file?.close().catch((e: unknown) => log(`[room] local work file close failed: ${errText(e)}`));
   }
   const table = parseLocalItems(text);
   return { ok: true, path: cleanText(rel.replace(/\\/g, '/'), 200) ?? '', items: table.items, total: table.total };

@@ -193,10 +193,22 @@ test('unknown, malformed and disabled project ids are refused for reads and open
   }
 });
 
-test('tickets: returns the reader result', async () => {
-  const res = await createRoomHandlers(deps().d).tickets('app');
+test('tickets: returns the reader result, read from the checked folder', async () => {
+  const { d } = deps();
+  const seen = [];
+  d.tickets = async (project) => { seen.push(project.path); return { zetahub: { ok: false, key: null, reason: 'no-key' }, local: { ok: false, reason: 'no-line' } }; };
+  const res = await createRoomHandlers(d).tickets('app');
   assert.equal(res.ok, true);
   assert.equal(res.tickets.local.reason, 'no-line');
+  assert.deepEqual(seen, ['D:/ws/App-real']);
+});
+
+test('tickets: a project folder that is now a link or outside the workspace reads nothing', async () => {
+  const { d } = deps({ moved: true });
+  let read = false;
+  d.tickets = async () => { read = true; return {}; };
+  assert.deepEqual(await createRoomHandlers(d).tickets('app'), { ok: false, error: 'project-moved' });
+  assert.equal(read, false);
 });
 
 test('open: a new session spawns once in the real folder and stores the lead id', async () => {
