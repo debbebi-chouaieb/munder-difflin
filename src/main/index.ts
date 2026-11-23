@@ -22,7 +22,7 @@ import { normalizeWeekly, weeklyDelayMs } from '../shared/weeklySchedule';
 import {
   getBranch, getStatus, getLog, getBranches, getAheadBehind, isRepo, getDiff, mainRepoRoot,
   addWorktree, removeWorktree, worktreeHasUnintegratedWork, worktreeIsGcSafe,
-  getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef
+  getLogGraph, getCommitFiles, getFileAtRev, compareRefs, listWorktrees, checkoutRef, rootCommitsOutput
 } from './git';
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
@@ -40,7 +40,7 @@ import { createRoomHandlers, registerRoomIpc } from './roomIpc';
 import { leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
-import type { Project } from '../shared/project';
+import type { Project, StoredProjectPatch } from '../shared/project';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
 import {
@@ -4578,11 +4578,18 @@ async function projectsWithin(ms: number): Promise<Project[] | null> {
 // Sessions, ticket tables and the lead's terminal of a project. The renderer
 // sends a project id only; the lead runs through the shared spawn core.
 const sessionLister = new SessionLister({ dirFor: projectDir, log: (line) => console.error(line) });
+const patchProjectForRoom = (projectId: string, patch: StoredProjectPatch): boolean => {
+  const res = projectService.patch(projectId, patch);
+  if (!res.ok) console.error(`[room] project ${projectId} not saved: ${res.error}`);
+  return res.ok;
+};
 const roomWiring = createRoomWiring({
   homedir,
   caseInsensitivePaths: process.platform === 'win32',
   workspaceRoot: () => readConfig().workspaceRoot,
   liveWebContents: () => liveWebContents(),
+  rootCommitsOutput,
+  patchProject: patchProjectForRoom,
   log: (line) => console.error(line)
 });
 registerRoomIpc(createRoomHandlers({
@@ -4603,11 +4610,10 @@ registerRoomIpc(createRoomHandlers({
     return res;
   },
   announceLead: (id, name, cwd, sender) => roomWiring.announceLead(id, name, cwd, sender ?? roomWiring.leadWindow(id)),
-  patchProject: (projectId, patch) => {
-    const res = projectService.patch(projectId, patch);
-    if (!res.ok) console.error(`[room] project ${projectId} not saved: ${res.error}`);
-    return res.ok;
-  },
+  patchProject: patchProjectForRoom,
+  trustState: roomWiring.trustState,
+  revokeTrust: roomWiring.revokeTrust,
+  repoRoot: roomWiring.repoRoot,
   killLead: (agentId) => {
     const res = ptyManager.kill(agentId);
     // A failed kill leaves the process running: keep its card, gate and Stop button.

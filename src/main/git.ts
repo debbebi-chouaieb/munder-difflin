@@ -149,6 +149,16 @@ export async function getAheadBehind(cwd: string): Promise<GitAheadBehind | { er
 }
 
 /** Best-effort detect: is `cwd` actually a git repo? */
+/**
+ * Raw `git rev-list --max-parents=0 HEAD` output: the repo's root commits
+ * (ADR 0007). Runs before the repo is trusted, so the repo's own fsmonitor and
+ * hooks settings are turned off for this call.
+ */
+export async function rootCommitsOutput(cwd: string): Promise<string | null> {
+  const res = await runGit(cwd, ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=', 'rev-list', '--max-parents=0', 'HEAD'], 5000);
+  return res.ok ? res.stdout : null;
+}
+
 export async function isRepo(cwd: string): Promise<boolean> {
   const res = await runGit(cwd, ['rev-parse', '--is-inside-work-tree']);
   return res.ok && res.stdout.trim() === 'true';

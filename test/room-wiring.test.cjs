@@ -8,6 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const loadTs = require('./load-ts.cjs');
 
 const { createRoomWiring } = loadTs('src/main/roomWiring.ts');
@@ -34,16 +35,23 @@ function fakeWindow(over = {}) {
   };
 }
 
+const ROOT = '1'.repeat(40);
+const WIN_APP = ['D:', 'ws', 'App'].join('\\');
+
 function wiring(over = {}) {
   const log = [];
+  const patches = [];
   const w = createRoomWiring({
     homedir: () => over.home ?? os.tmpdir(),
     caseInsensitivePaths: process.platform === 'win32',
     workspaceRoot: () => over.root ?? null,
     liveWebContents: () => over.live ?? null,
+    rootCommitsOutput: async () => ('rootOut' in over ? over.rootOut : `${ROOT}
+`),
+    patchProject: (id, patch) => { patches.push([id, patch]); return over.patchOk ?? true; },
     log: (line) => log.push(line)
   });
-  return { w, log };
+  return { w, log, patches };
 }
 
 function claudeJsonTrusting(home, folder) {
@@ -133,7 +141,7 @@ test('trusted lead folder: only a trusted project, in its own plain folder', asy
   fs.mkdirSync(app);
   fs.mkdirSync(web);
   const projects = [
-    { id: 'app', path: app, leadAgentId: 'lead--app', trusted: true },
+    { id: 'app', path: app, leadAgentId: 'lead--app', trusted: true, trustedRoot: ROOT },
     { id: 'web', path: web, leadAgentId: null, trusted: false }
   ];
   const { w } = wiring({ root: ws });
@@ -146,6 +154,9 @@ test('trusted lead folder: only a trusted project, in its own plain folder', asy
   const link = path.join(ws, 'link');
   fs.symlinkSync(app, link, 'junction');
   assert.equal(await w.trustedLeadFolder('lead--app', link, projects), null, 'a link to the project is not the project');
+  const recloned = wiring({ root: ws, rootOut: `${'2'.repeat(40)}
+` });
+  assert.equal(await recloned.w.trustedLeadFolder('lead--app', app, projects), null, 'another repo in the folder runs untrusted');
 });
 
 test('still lead folder: a folder swapped for a link fails the last check', async (t) => {
@@ -175,4 +186,63 @@ test('lead cards: a destroyed owner window is forgotten, a newer owner is kept',
   w.ownLead('lead--web', next);
   old.destroy();
   assert.equal(w.leadWindow('lead--web'), next);
+});
+
+test('trust state: none, trusted for the same repo, stale for another repo or no git', async () => {
+  const project = { id: 'app', path: 'D:/ws/App', trusted: true, trustedRoot: ROOT };
+  assert.equal(await wiring().w.trustState({ ...project, trusted: false }, 'D:/ws/App'), 'none');
+  assert.equal(await wiring().w.trustState(project, 'D:/ws/App'), 'trusted');
+  assert.equal(await wiring({ rootOut: `${'2'.repeat(40)}
+` }).w.trustState(project, 'D:/ws/App'), 'stale');
+  assert.equal(await wiring({ rootOut: null }).w.trustState(project, 'D:/ws/App'), 'stale');
+  assert.equal(await wiring({ rootOut: '' }).w.repoRoot('D:/ws/App'), null, 'a repo with no commit has no root');
+});
+
+test('revoke: drops stored trust and Claude folder trust for both folder spellings, keeps the rest', async (t) => {
+  const home = tempDir(t);
+  const file = path.join(home, '.claude.json');
+  fs.writeFileSync(file, JSON.stringify({
+    numStartups: 3,
+    projects: {
+      'D:/ws/App': { hasTrustDialogAccepted: true, allowedTools: ['x'] },
+      [WIN_APP]: { hasTrustDialogAccepted: true },
+      'D:/real/App': { hasTrustDialogAccepted: true },
+      'D:/ws': { hasTrustDialogAccepted: true }
+    }
+  }));
+  const { w, patches } = wiring({ home });
+  assert.equal(await w.revokeTrust({ id: 'app', path: WIN_APP }, 'D:/real/App'), true);
+  assert.deepEqual(patches, [['app', { trustedPath: null, trustedRoot: null }]]);
+  const after = JSON.parse(fs.readFileSync(file, 'utf8'));
+  assert.equal(after.numStartups, 3);
+  assert.deepEqual(after.projects['D:/ws/App'], { allowedTools: ['x'] });
+  assert.deepEqual(after.projects[WIN_APP], {});
+  assert.deepEqual(after.projects['D:/real/App'], {});
+  assert.deepEqual(after.projects['D:/ws'], { hasTrustDialogAccepted: true }, 'a parent the app never wrote is kept');
+});
+
+test('revoke: a missing Claude config is fine; an unreadable one or a failed save reports false', async (t) => {
+  const project = { id: 'app', path: 'D:/ws/App' };
+  assert.equal(await wiring({ home: tempDir(t) }).w.revokeTrust(project, null), true);
+  const home = tempDir(t);
+  fs.writeFileSync(path.join(home, '.claude.json'), '{ not json');
+  const broken = wiring({ home });
+  assert.equal(await broken.w.revokeTrust(project, null), false);
+  assert.equal(broken.patches.length, 1, 'stored trust is dropped even when Claude config is not');
+  assert.equal(broken.log.length, 1);
+  assert.equal(await wiring({ home: tempDir(t), patchOk: false }).w.revokeTrust(project, null), false);
+});
+
+test('root commits: read from a real repo, with repo-local fsmonitor and hooks turned off', async (t) => {
+  const { rootCommitsOutput } = loadTs('src/main/git.ts');
+  const { trustedRootFrom } = loadTs('src/shared/project.ts');
+  const repo = tempDir(t);
+  const git = (...args) => execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', ...args], { cwd: repo, encoding: 'utf8' });
+  git('init', '-q');
+  assert.equal(trustedRootFrom((await rootCommitsOutput(repo)) ?? ''), null, 'no commit yet');
+  // A planted fsmonitor command would run on index reads; this call must not need it.
+  git('config', 'core.fsmonitor', 'exit 1');
+  git('commit', '-q', '--allow-empty', '--no-verify', '-m', 'root');
+  const head = git('rev-parse', 'HEAD').trim();
+  assert.equal(trustedRootFrom((await rootCommitsOutput(repo)) ?? ''), head);
 });

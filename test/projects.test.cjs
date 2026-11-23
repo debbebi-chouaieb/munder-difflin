@@ -381,10 +381,15 @@ test('the service refuses unknown ids, bad keys and missing hives', async (t) =>
 
 // ─── trust for room leads (ADR 0005) ────────────────────────────────────────
 
-test('trust: off by default, on only for the stored folder path', () => {
-  const stored = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, trustedPath: 'D:\\ws\\App\\' } } });
+test('trust: off by default, on only for the stored folder path bound to a root', () => {
+  const root = 'a'.repeat(40);
+  const stored = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, trustedPath: 'D:\\ws\\App\\', trustedRoot: root } } });
   const [same] = shared.mergeProjects([folder('App', { path: 'd:/ws/app' })], stored);
   assert.equal(same.trusted, true);
+  assert.equal(same.trustedRoot, root);
+  // Saved before ADR 0007: a path without a root is asked again.
+  const legacy = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, trustedPath: 'D:/ws/App' } } });
+  assert.equal(shared.mergeProjects([folder('App', { path: 'D:/ws/App' })], legacy)[0].trusted, false);
   const [moved] = shared.mergeProjects([folder('App', { path: 'D:/ws2/App' })], stored);
   assert.equal(moved.trusted, false);
   const [fresh] = shared.mergeProjects([folder('App')], { version: 1, projects: {} });
@@ -405,6 +410,27 @@ test('trust: patch sets and removes the path, ignores junk', () => {
   assert.equal('trustedPath' in shared.patchStoredProject(on, 'app', { trustedPath: null }).projects.app, false);
   assert.equal(shared.patchStoredProject(on, 'app', { trustedPath: '' }).projects.app.trustedPath, 'D:/ws/App');
   assert.equal(shared.patchStoredProject(on, 'app', {}).projects.app.trustedPath, 'D:/ws/App');
+});
+
+test('trust root: only commit ids are stored; patch sets and removes it', () => {
+  const sha1 = 'a'.repeat(40);
+  const sha256 = 'b'.repeat(64);
+  for (const bad of ['', 'A'.repeat(40), 'a'.repeat(39), 'a'.repeat(41), `${sha1},`, `../${sha1}`, 42, null]) {
+    const file = shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, trustedRoot: bad } } });
+    assert.equal('trustedRoot' in file.projects.app, false, String(bad));
+  }
+  const on = shared.patchStoredProject({ version: 1, projects: {} }, 'app', { trustedRoot: `${sha1},${sha256}` });
+  assert.equal(on.projects.app.trustedRoot, `${sha1},${sha256}`);
+  assert.equal('trustedRoot' in shared.patchStoredProject(on, 'app', { trustedRoot: null }).projects.app, false);
+  assert.equal(shared.patchStoredProject(on, 'app', { trustedRoot: 'junk' }).projects.app.trustedRoot, `${sha1},${sha256}`);
+});
+
+test('trust root: rev-list output is sorted, de-duplicated, and empty or junk gives null', () => {
+  const a = 'a'.repeat(40);
+  const c = 'c'.repeat(40);
+  assert.equal(shared.trustedRootFrom(`${c}\r\n${a}\n${c}\n`), `${a},${c}`);
+  assert.equal(shared.trustedRootFrom(''), null);
+  assert.equal(shared.trustedRootFrom('fatal: not a git repository'), null);
 });
 
 test('local open work path is read at scan time', () => {

@@ -34,7 +34,13 @@ export interface RoomDeps {
   /** Re-announces a running lead, so a reloaded window gets its card back. */
   announceLead: (agentId: string, name: string, cwd: string, sender: WebContents | null) => void;
   /** Saves stored project fields; false when the write failed. */
-  patchProject: (projectId: string, patch: { leadAgentId?: string; trustedPath?: string | null }) => boolean;
+  patchProject: (projectId: string, patch: { leadAgentId?: string; trustedPath?: string | null; trustedRoot?: string | null }) => boolean;
+  /** Whether stored trust still holds for the repo now in `cwd` (ADR 0007). */
+  trustState: (project: Project, cwd: string) => Promise<'trusted' | 'stale' | 'none'>;
+  /** Drops the project's trust and Claude's folder trust; false when a part was not saved. */
+  revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  /** The stored form of the repo's root commits in `cwd`, or null (no git, no commit). */
+  repoRoot: (cwd: string) => Promise<string | null>;
   killLead: (agentId: string) => { ok: boolean; error?: string };
   /** Removes the lead's card from the window; harmless when it is already gone. */
   archiveLead: (agentId: string) => void;
@@ -63,9 +69,16 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     const agentId = leadAgentIdFor(project);
     const cwd = await deps.resolveProjectCwd(project.path);
     if (!cwd) return { ok: false, error: 'project-moved' };
+    // Stored trust holds only for the repo it was given to (ADR 0007). Another repo
+    // in the folder drops it, Claude's own folder trust included, and asks again.
+    const state = await deps.trustState(project, cwd);
+    if (state === 'stale') {
+      deps.log(`[room] ${project.id} holds another repo than the one trusted; trust dropped`);
+      if (!(await deps.revokeTrust(project, cwd))) deps.log(`[room] trust for ${project.id} not fully dropped`);
+    }
     // Ask when no answer was given, and again when the project now points at a
     // different folder than the one the person said "yes" to.
-    if (!project.trusted && (request.trust === null || (request.trust === 'yes' && request.trustPath !== project.path))) {
+    if (state !== 'trusted' && (request.trust === null || (request.trust === 'yes' && request.trustPath !== project.path))) {
       if (request.trust === 'yes') deps.log(`[room] trust answer for ${project.id} named another folder; asking again`);
       return { ok: false, error: 'needs-trust', path: project.path, claudeTrusts: await deps.claudeTrusts(cwd) };
     }
@@ -76,17 +89,19 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     }
     // Saved only once every check passed, so a refused open stores nothing. Main
     // re-reads trust at spawn, so an unsaved "yes" opens untrusted, and says so.
-    let trusted = project.trusted;
+    let trusted = state === 'trusted';
     const grantedNow = !trusted && request.trust === 'yes';
     if (grantedNow) {
-      trusted = deps.patchProject(project.id, { trustedPath: project.path });
-      if (!trusted) deps.log(`[room] could not store trust for ${project.id}; opening untrusted`);
+      // A repo with no commit cannot be told from a re-clone: it opens untrusted.
+      const root = await deps.repoRoot(cwd);
+      trusted = root !== null && deps.patchProject(project.id, { trustedPath: project.path, trustedRoot: root });
+      if (!trusted) deps.log(`[room] could not store trust for ${project.id}${root ? '' : ' (no root commit)'}; opening untrusted`);
     }
     const res = await deps.spawnLead(buildLeadSpawn(project, cwd, request.sessionId, trusted), sender);
     if (!res.ok) {
       deps.log(`[room] lead spawn failed for ${project.id}: ${res.error ?? 'no detail'}`);
       // A "yes" to an open that never ran is not kept: the next open asks again.
-      if (grantedNow && trusted && !deps.patchProject(project.id, { trustedPath: null })) {
+      if (grantedNow && trusted && !deps.patchProject(project.id, { trustedPath: null, trustedRoot: null })) {
         deps.log(`[room] could not undo trust for ${project.id} after a failed spawn`);
       }
       return { ok: false, error: res.resumeNotFound ? 'session-not-found' : 'spawn-failed' };

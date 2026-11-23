@@ -21,16 +21,22 @@ export interface StoredProject {
    * folder (slug collision, folder removed) does not carry trust with it.
    */
   trustedPath?: string;
+  /**
+   * The repo's root commit hashes when trust was given (ADR 0007), sorted and
+   * joined by ",". A re-clone of another repo at `trustedPath` does not match.
+   */
+  trustedRoot?: string;
   /** Room ZetaHub section on or off (ADR 0005); absent: shown when the project has a key. */
   showZetahub?: boolean;
 }
 
 /** A change to one project. `zetahubKey: null` removes the user-set key; `showZetahub: null` returns to auto. */
-export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'showZetahub'>> & {
+export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'trustedRoot' | 'showZetahub'>> & {
   zetahubKey?: string | null;
   showZetahub?: boolean | null;
   /** Null removes trust. */
   trustedPath?: string | null;
+  trustedRoot?: string | null;
 };
 
 export interface ProjectsFile {
@@ -65,7 +71,12 @@ export interface Project {
   /** The project's own agents (`.claude/agents/<name>.md`): desks started on demand. */
   agents: string[];
   leadAgentId: string | null;
+  /**
+   * Trust was given for this folder and bound to a repo (ADR 0007). Main still
+   * checks that the folder's root commit matches `trustedRoot` before using it.
+   */
   trusted: boolean;
+  trustedRoot: string | null;
   /** Relative path from the "Local open work:" line of CLAUDE.md (ADR 0005), or null. */
   localWorkPath: string | null;
   /** The user's choice for the room ZetaHub section; null: auto (see `zetahubShown`). */
@@ -134,6 +145,19 @@ export function parseZetahubKey(claudeMd: string | null): string | null {
 }
 
 const MAX_TRUSTED_PATH = 1024;
+/** SHA-1 or SHA-256 commit ids, a few roots at most (a repo with merged histories). */
+const TRUSTED_ROOT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?(?:,[0-9a-f]{40}(?:[0-9a-f]{24})?){0,15}$/;
+
+export function isValidTrustedRoot(value: unknown): value is string {
+  return typeof value === 'string' && TRUSTED_ROOT.test(value);
+}
+
+/** The stored form of `git rev-list --max-parents=0 HEAD` output, or null when it names no valid root. */
+export function trustedRootFrom(revListOutput: string): string | null {
+  const roots = [...new Set(revListOutput.split(/\s+/).map((line) => line.trim()).filter(Boolean))].sort();
+  const joined = roots.join(',');
+  return roots.length > 0 && isValidTrustedRoot(joined) ? joined : null;
+}
 
 /** Path equality that ignores slash direction, a trailing slash and case (Windows folders). */
 export function samePath(a: string, b: string): boolean {
@@ -210,7 +234,9 @@ export function mergeProjects(folders: ProjectFolder[], stored: ProjectsFile): P
         hasClaudeMd: folder.claudeMd !== null,
         agents: agentNamesFrom(folder.agentFiles),
         leadAgentId: saved?.leadAgentId ?? null,
-        trusted: !!saved?.trustedPath && samePath(saved.trustedPath, folder.path),
+        // A record saved before ADR 0007 has no root: ask once more.
+        trusted: !!saved?.trustedPath && !!saved.trustedRoot && samePath(saved.trustedPath, folder.path),
+        trustedRoot: saved?.trustedRoot ?? null,
         localWorkPath: parseLocalWorkPath(folder.claudeMd),
         showZetahub: typeof saved?.showZetahub === 'boolean' ? saved.showZetahub : null
       };
@@ -240,6 +266,7 @@ export function parseProjectsFile(raw: unknown): ProjectsFile {
       ...(typeof v.zetahubKey === 'string' && isValidZetahubKey(v.zetahubKey) ? { zetahubKey: v.zetahubKey } : {}),
       ...(typeof v.leadAgentId === 'string' && v.leadAgentId ? { leadAgentId: v.leadAgentId } : {}),
       ...(typeof v.trustedPath === 'string' && v.trustedPath && v.trustedPath.length <= MAX_TRUSTED_PATH ? { trustedPath: v.trustedPath } : {}),
+      ...(isValidTrustedRoot(v.trustedRoot) ? { trustedRoot: v.trustedRoot } : {}),
       ...(typeof v.showZetahub === 'boolean' ? { showZetahub: v.showZetahub } : {})
     };
   }
@@ -287,6 +314,8 @@ export function patchStoredProject(file: ProjectsFile, id: string, patch: Stored
   else if (typeof patch.trustedPath === 'string' && patch.trustedPath && patch.trustedPath.length <= MAX_TRUSTED_PATH) {
     next.trustedPath = patch.trustedPath;
   }
+  if (patch.trustedRoot === null) delete next.trustedRoot;
+  else if (isValidTrustedRoot(patch.trustedRoot)) next.trustedRoot = patch.trustedRoot;
   if (patch.showZetahub === null) delete next.showZetahub;
   else if (typeof patch.showZetahub === 'boolean') next.showZetahub = patch.showZetahub;
   const projects: Record<string, StoredProject> = Object.assign(Object.create(null), file.projects);

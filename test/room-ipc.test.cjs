@@ -17,13 +17,14 @@ const { createRoomHandlers } = loadTs('src/main/roomIpc.ts');
 const ABC = '00000000-0000-4000-8000-000000000abc';
 const BIG = '00000000-0000-4000-8000-000000000b19';
 const NULLSIZE = '00000000-0000-4000-8000-0000000000aa';
+const ROOT = '1111111111111111111111111111111111111111';
 const PROJECT = {
   id: 'app', name: 'App', path: 'D:/ws/App', leadAgentId: null, enabled: true, trusted: true,
   zetahubKey: null, localWorkPath: null
 };
 
 function deps(over = {}) {
-  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [] };
+  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [] };
   const running = new Set(over.running ?? []);
   const sessions = {
     [ABC]: { id: ABC, large: false, contextTokens: 10 },
@@ -40,6 +41,9 @@ function deps(over = {}) {
     spawnLead: async (opts) => { calls.spawn.push(opts); running.add(opts.id); return over.spawnResult ?? { ok: true }; },
     announceLead: (...args) => calls.announce.push(args),
     patchProject: (id, patch) => { calls.patch.push([id, patch]); return over.patchOk ?? true; },
+    trustState: async (p) => over.trustState ?? (p.trusted ? 'trusted' : 'none'),
+    revokeTrust: async (p, cwd) => { calls.revoke.push([p.id, cwd]); return true; },
+    repoRoot: async () => ('repoRoot' in over ? over.repoRoot : ROOT),
     killLead: (id) => { calls.kill.push(id); if (over.killFails) return { ok: false, error: 'EPERM' }; running.delete(id); return { ok: true }; },
     archiveLead: (id) => { calls.archive.push(id); },
     log: (m) => calls.log.push(m)
@@ -232,7 +236,7 @@ test('trust: an untrusted project asks first, and says when Claude already trust
 test('trust: "yes" stores the folder path and spawns trusted', async () => {
   const { d, calls } = deps({ project: { trusted: false } });
   const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null);
-  assert.deepEqual(calls.patch[0], ['app', { trustedPath: 'D:/ws/App' }]);
+  assert.deepEqual(calls.patch[0], ['app', { trustedPath: 'D:/ws/App', trustedRoot: ROOT }]);
   assert.equal(calls.spawn[0].untrusted, false);
   assert.equal(res.untrusted, false);
 });
@@ -268,6 +272,24 @@ test('trust: a failed save opens untrusted, as main will, and is logged', async 
   assert.equal(res.untrusted, true, 'the panel is told the "yes" did not stick');
   assert.equal(calls.spawn[0].untrusted, true);
   assert.ok(calls.log.some((m) => m.includes('opening untrusted')));
+});
+
+test('trust: another repo in the trusted folder drops trust, Claude folder trust included, and asks again', async () => {
+  const { d, calls } = deps({ trustState: 'stale' });
+  const res = await createRoomHandlers(d).openTerminal('app', null, null);
+  assert.deepEqual(res, { ok: false, error: 'needs-trust', path: 'D:/ws/App', claudeTrusts: false });
+  assert.deepEqual(calls.revoke, [['app', 'D:/ws/App-real']]);
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('trust: a "yes" for a repo without a commit opens untrusted and stores nothing', async () => {
+  const { d, calls } = deps({ project: { trusted: false }, repoRoot: null });
+  const res = await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null);
+  assert.equal(res.ok, true);
+  assert.equal(res.untrusted, true);
+  assert.equal(calls.spawn[0].untrusted, true);
+  assert.deepEqual(calls.patch.filter(([, p]) => 'trustedPath' in p), []);
+  assert.ok(calls.log.some((m) => m.includes('no root commit')));
 });
 
 test('open: a running lead is re-announced, not spawned again', async () => {
@@ -357,7 +379,7 @@ test('open: a "yes" whose spawn failed is undone, so the next open asks again', 
   const failed = deps({ project: { trusted: false }, spawnResult: { ok: false, error: 'boom' } });
   const h = createRoomHandlers(failed.d);
   assert.deepEqual(await h.openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null), { ok: false, error: 'spawn-failed' });
-  assert.deepEqual(failed.calls.patch, [['app', { trustedPath: 'D:/ws/App' }], ['app', { trustedPath: null }]]);
+  assert.deepEqual(failed.calls.patch, [['app', { trustedPath: 'D:/ws/App', trustedRoot: ROOT }], ['app', { trustedPath: null, trustedRoot: null }]]);
 
   const already = deps({ spawnResult: { ok: false, error: 'boom' } });
   await createRoomHandlers(already.d).openTerminal('app', null, null);
