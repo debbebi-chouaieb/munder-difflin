@@ -75,7 +75,7 @@ test('new projects start disabled and serial; stored state wins', () => {
   });
   const list = shared.mergeProjects(
     [
-      folder('mdm-platform', { claudeMd: 'ZetaHub project key: `MDM`', agentFiles: ['go-dev.md'] }),
+      folder('mdm-platform', { claudeMd: 'ZetaHub project key: `MDM`', agentFiles: [{ file: 'go-dev.md', head: null }] }),
       folder('mcx', { claudeMd: 'ZetaHub project key: `MCX`' }),
       folder('.idea'),
       folder('Wrapper', { isGitRepo: false })
@@ -93,7 +93,7 @@ test('new projects start disabled and serial; stored state wins', () => {
   assert.equal(mdm.parallel, false);
   assert.equal(mdm.zetahubKey, 'MDM');
   assert.equal(mdm.zetahubKeySource, 'claude-md');
-  assert.deepEqual(mdm.agents, ['go-dev']);
+  assert.deepEqual(mdm.agents, [{ file: 'go-dev', name: 'go-dev', model: null, description: null }]);
 });
 
 test('a folder named like an Object.prototype key gets default state', () => {
@@ -154,6 +154,11 @@ function makeWorkspace(t) {
   fs.writeFileSync(path.join(ws, 'mdm-platform', 'CLAUDE.md'), 'ZetaHub project key: `MDM`\n');
   fs.mkdirSync(path.join(ws, 'mdm-platform', '.claude', 'agents'), { recursive: true });
   fs.writeFileSync(path.join(ws, 'mdm-platform', '.claude', 'agents', 'go-dev.md'), '# go-dev\n');
+  fs.writeFileSync(
+    path.join(ws, 'mdm-platform', '.claude', 'agents', 'reviewer.md'),
+    '---\nname: code-reviewer\nmodel: sonnet\ndescription: Reviews diffs.\n---\n' + 'x'.repeat(20000)
+  );
+  fs.writeFileSync(path.join(ws, 'mdm-platform', '.claude', 'agents', 'notes.txt'), '---\nname: nope\n---\n');
   repo('mdm-core');
   fs.mkdirSync(path.join(ws, 'mdm-core', '.claude'), { recursive: true });
   fs.writeFileSync(path.join(ws, 'mdm-core', '.claude', 'CLAUDE.md'), '# Fleet\n');
@@ -193,7 +198,23 @@ test('readWorkspace finds only git folders and reads their CLAUDE.md and agents'
   assert.deepEqual(list.map((p) => p.name), ['mdm-core', 'mdm-platform']);
   assert.equal(list[0].hasClaudeMd, true, '.claude/CLAUDE.md is found too');
   assert.equal(list[1].zetahubKey, 'MDM');
-  assert.deepEqual(list[1].agents, ['go-dev']);
+  assert.deepEqual(list[1].agents, [
+    { file: 'go-dev', name: 'go-dev', model: null, description: null },
+    { file: 'reviewer', name: 'code-reviewer', model: 'sonnet', description: 'Reviews diffs.' }
+  ]);
+  const heads = res.folders.find((f) => f.name === 'mdm-platform').agentFiles;
+  assert.deepEqual(heads.map((h) => h.file), ['go-dev.md', 'reviewer.md'], 'only valid .md names are opened');
+  assert.ok(heads.every((h) => Buffer.byteLength(h.head) <= 8 * 1024), 'a head is capped');
+});
+
+test('readWorkspace does not open a linked agent file', { skip: process.platform === 'win32' && 'symlinks need privileges on Windows' }, async (t) => {
+  const env = makeWorkspace(t);
+  const secret = path.join(env.dir, 'secret.md');
+  fs.writeFileSync(secret, '---\nname: leaked\n---\n');
+  fs.symlinkSync(secret, path.join(env.ws, 'mdm-platform', '.claude', 'agents', 'link.md'));
+  const res = await readWorkspace(env.ws);
+  const heads = res.folders.find((f) => f.name === 'mdm-platform').agentFiles;
+  assert.equal(heads.some((h) => h.file === 'link.md'), false);
 });
 
 test('a junction to a repo outside the workspace is not a project', async (t) => {

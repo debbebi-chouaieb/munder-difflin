@@ -15,6 +15,7 @@ import { useRoomPanel } from '@/store/roomPanel';
 import { boardCounts } from '@/store/roomBoardCounts';
 import { RoomSessionList } from './RoomSessionList';
 import { RoomTaskColumns } from './RoomTaskColumns';
+import { RoomAgentList } from './RoomAgentList';
 import { RoomSplitter } from './RoomSplitter';
 import { RoomCapDialog, RoomLargeSessionDialog, RoomTrustDialog } from './RoomDialogs';
 import { LeadTerminal } from './LeadTerminal';
@@ -32,7 +33,8 @@ const SPLITTER_HEIGHT = 8;
 
 /**
  * A project room in the right panel (ADR 0005): recent sessions, the lead's
- * terminal (started only when the person asks) and the project's tasks. App
+ * terminal (started only when the person asks), the project's tasks and its
+ * agents (ADR 0009). App
  * mounts one instance per room (`key`), so a late answer never lands in another
  * room. Every call to main carries the project id only. Reads happen on open,
  * after the lead starts or stops, and on window focus; there is no polling.
@@ -237,6 +239,7 @@ export function RoomPanel({ projectId }: { projectId: string }) {
             onOpen={(sessionId) => void open({ sessionId })}
           />
           <RoomTaskColumns tickets={tickets} errorKey={ticketsError} />
+          <RoomAgentList agents={project.agents} />
         </div>
         {leadRunning && leadId && (
           <>

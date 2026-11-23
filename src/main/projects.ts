@@ -10,10 +10,11 @@
 import { ipcMain, dialog, BrowserWindow } from 'electron';
 import type { WebContents } from 'electron';
 import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { lstat, readdir, readFile, stat } from 'node:fs/promises';
+import { lstat, open, readdir, readFile, stat, type FileHandle } from 'node:fs/promises';
 import { isAbsolute, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mapLimit } from '../shared/mapLimit';
+import { AGENT_HEAD_BYTES, MAX_AGENT_FILES, agentNameOfFile, type AgentFileHead } from '../shared/agentDefinition';
 import {
   agentNamesFrom,
   emptyProjectsFile,
@@ -239,7 +240,7 @@ export async function readWorkspace(
       ...base,
       isGitRepo: true,
       claudeMd: (await readSmallText(join(path, 'CLAUDE.md'))) ?? (await readSmallText(join(path, '.claude', 'CLAUDE.md'))),
-      agentFiles: await listFiles(join(path, '.claude', 'agents'))
+      agentFiles: await agentHeads(join(path, '.claude', 'agents'))
     };
   });
   return { ok: true, folders };
@@ -253,6 +254,32 @@ async function readSmallText(path: string): Promise<string | null> {
     return await readFile(path, 'utf8');
   } catch {
     return null;
+  }
+}
+
+/**
+ * The first AGENT_HEAD_BYTES of each agent file in a real `.claude/agents` folder,
+ * at most MAX_AGENT_FILES of them (ADR 0009). Files with no valid agent name are
+ * not opened; an unreadable file keeps its name with a null head.
+ */
+async function agentHeads(dir: string): Promise<AgentFileHead[]> {
+  const files = (await listFiles(dir)).filter((f) => agentNameOfFile(f) !== null).sort().slice(0, MAX_AGENT_FILES);
+  return mapLimit(files, SCAN_CONCURRENCY, async (file) => ({ file, head: await readHead(join(dir, file), AGENT_HEAD_BYTES) }));
+}
+
+/** Up to `maxBytes` of a plain file (not a link) as UTF-8, or null. */
+async function readHead(path: string, maxBytes: number): Promise<string | null> {
+  let handle: FileHandle | null = null;
+  try {
+    if (!(await lstat(path)).isFile()) return null;
+    handle = await open(path, 'r');
+    const buf = Buffer.alloc(maxBytes);
+    const { bytesRead } = await handle.read(buf, 0, maxBytes, 0);
+    return buf.subarray(0, bytesRead).toString('utf8');
+  } catch {
+    return null;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }
 

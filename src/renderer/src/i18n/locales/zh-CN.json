@@ -1498,6 +1498,9 @@
       "cancel": "取消",
       "confirm": "停止并打开"
     },
+    "agents": {
+      "title": "代理"
+    },
     "sessions": {
       "title": "会话",
       "new": "新会话",

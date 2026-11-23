@@ -1498,6 +1498,9 @@
       "cancel": "Cancel",
       "confirm": "Stop and open"
     },
+    "agents": {
+      "title": "AGENTS"
+    },
     "sessions": {
       "title": "SESSIONS",
       "new": "New session",

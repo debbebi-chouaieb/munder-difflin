@@ -81,9 +81,10 @@ export function ProjectRow({ project, onFloor, onToggleEnabled, onToggleParallel
             {project.agents.length === 0 ? (
               <li style={{ ...smallText, listStyle: 'none' }}>{t('projectSidebar.noAgents')}</li>
             ) : (
-              project.agents.map((name) => (
-                <li key={name} style={{ ...smallText, listStyle: 'none' }} title={t('projectSidebar.deskTitle')}>
-                  <span aria-hidden="true">○ </span>{name}
+              project.agents.map((agent) => (
+                <li key={agent.file} style={{ ...smallText, listStyle: 'none' }} title={agent.description ?? t('projectSidebar.deskTitle')}>
+                  <span aria-hidden="true">○ </span><span dir="auto">{agent.name}</span>
+                  {agent.model && <> · <bdi>{agent.model}</bdi></>}
                 </li>
               ))
             )}

@@ -1,3 +1,5 @@
+import { agentDefinitionsFrom, agentNameOfFile, type AgentDefinition, type AgentFileHead } from './agentDefinition';
+
 /**
  * Workspace projects (ADR 0001): each non-hidden, top-level git folder of the
  * workspace root is one project, one office room and one sidebar checkbox.
@@ -54,8 +56,8 @@ export interface ProjectFolder {
   isGitRepo: boolean;
   /** Contents of `CLAUDE.md` or `.claude/CLAUDE.md`, or null when absent. */
   claudeMd: string | null;
-  /** File names found in `.claude/agents/`. */
-  agentFiles: string[];
+  /** `.md` files found in `.claude/agents/`, each with the head main read (ADR 0009). */
+  agentFiles: AgentFileHead[];
 }
 
 export interface Project {
@@ -68,8 +70,8 @@ export interface Project {
   /** Where `zetahubKey` came from, so the UI can tell a guess from a setting. */
   zetahubKeySource: 'user' | 'claude-md' | null;
   hasClaudeMd: boolean;
-  /** The project's own agents (`.claude/agents/<name>.md`): desks started on demand. */
-  agents: string[];
+  /** The project's own agents (`.claude/agents/<name>.md`): desks started on demand (ADR 0009). */
+  agents: AgentDefinition[];
   leadAgentId: string | null;
   /**
    * Trust was given for this folder and bound to a repo (ADR 0007). Main still
@@ -95,7 +97,6 @@ export interface ProjectsSnapshot {
 export type ProjectResult = { ok: true; snapshot: ProjectsSnapshot } | { ok: false; error: string };
 
 const ZETAHUB_KEY = /^[A-Z][A-Z0-9]{0,9}(?:-[A-Z0-9]{1,10})?$/;
-const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 /** Same shape `projectIdFor` produces; also keeps `__proto__` out of the map. */
 const PROJECT_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_KEY_INPUT = 64;
@@ -188,9 +189,8 @@ export function normalizeZetahubKey(input: unknown): { ok: true; key: string | n
 export function agentNamesFrom(files: string[]): string[] {
   const names = new Set<string>();
   for (const file of files) {
-    if (!file.toLowerCase().endsWith('.md')) continue;
-    const name = file.slice(0, -3);
-    if (AGENT_NAME.test(name)) names.add(name);
+    const name = agentNameOfFile(file);
+    if (name !== null) names.add(name);
   }
   return [...names].sort(byCodePoint);
 }
@@ -232,7 +232,7 @@ export function mergeProjects(folders: ProjectFolder[], stored: ProjectsFile): P
         zetahubKey: userKey ?? fileKey,
         zetahubKeySource: userKey ? 'user' : fileKey ? 'claude-md' : null,
         hasClaudeMd: folder.claudeMd !== null,
-        agents: agentNamesFrom(folder.agentFiles),
+        agents: agentDefinitionsFrom(folder.agentFiles),
         leadAgentId: saved?.leadAgentId ?? null,
         // A record saved before ADR 0007 has no root: ask once more.
         trusted: !!saved?.trustedPath && !!saved.trustedRoot && samePath(saved.trustedPath, folder.path),
