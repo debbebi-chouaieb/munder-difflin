@@ -18,6 +18,7 @@ import type { HiveManager } from './hive';
 import type { HarnessConfig } from './config';
 import type { ControlRegistry } from './control';
 import type { CircuitBreaker } from './breaker';
+import type { SpawnTokenCheck } from './spawnTokens';
 import { estimateCostUsd } from './pricing';
 import { validateHookEvent } from '../shared/hookEvents';
 
@@ -152,7 +153,10 @@ export class HookServer {
      *  token). The worker inbox-wake watchdog (workerWake.ts) feeds on this to learn
      *  when an agent is parked on a permission/HITL prompt so it never types into
      *  it; the trust prompt gate checks the spawn token (ADR 0008). */
-    private onEvent?: (agentId: string | undefined, event: string, message: string | undefined, spawnToken: string | undefined) => void
+    private onEvent?: (agentId: string | undefined, event: string, message: string | undefined, spawnToken: string | undefined) => void,
+    /** Compares an event's spawn token with the one issued for its agent. Optional
+     *  so tests can omit it; without it every event is accepted (ADR 0010). */
+    private checkSpawnToken?: (agentId: string, spawnToken: string | undefined) => SpawnTokenCheck
   ) {}
 
   /** Bind the hook socket. Asynchronous and safe to call repeatedly — a
@@ -386,7 +390,24 @@ export class HookServer {
   private handle(p: HookPayload): unknown {
     const agentId = p.agent_id ?? undefined;
     const event = p.hook_event_name ?? 'Unknown';
-    this.onEvent?.(agentId, event, p.message, typeof p.spawn_token === 'string' ? p.spawn_token : undefined);
+    const spawnToken = typeof p.spawn_token === 'string' ? p.spawn_token : undefined;
+    // An event for an agent main issued a token to must carry that token: anything
+    // else is a forged or stale hook and touches no state (ADR 0010).
+    if (agentId && this.checkSpawnToken?.(agentId, spawnToken) === 'rejected') {
+      this.hive.appendLog({ kind: 'hook-token-rejected', agentId, event });
+      // Fail closed on a tool call: a sender that lost the token must not run tools unguarded.
+      if (event === 'PreToolUse') {
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny',
+            permissionDecisionReason: 'Hook token mismatch: this event does not come from the current spawn of this agent.'
+          }
+        };
+      }
+      return {};
+    }
+    this.onEvent?.(agentId, event, p.message, spawnToken);
     if (agentId && typeof p.transcript_path === 'string' && p.transcript_path) {
       this.transcriptPaths.set(agentId, p.transcript_path);
     }

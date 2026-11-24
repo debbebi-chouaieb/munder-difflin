@@ -27,6 +27,7 @@ import {
 import { linkWorktreeDeps, unlinkWorktreeDeps } from './worktreeDeps';
 import { HiveManager, type AgentMeta, type HiveMessage, type HiveTask } from './hive';
 import { HookServer } from './hooks';
+import { SpawnTokens } from './spawnTokens';
 import { CircuitBreaker, type BreakerInput } from './breaker';
 import { CumulativeSampleGate, type UsageProvider } from './usage';
 import { MemoryManager } from './memory';
@@ -317,6 +318,8 @@ const workerWake = new WorkerWakeWatchdog();
 // Untrusted room leads may sit at Claude's trust prompt, whose default is "yes":
 // no automation types into them until a hook event proves Claude is past it.
 const trustPromptGate = new TrustPromptGate();
+// The hook token of every spawn's agent: an event for that agent must carry it (ADR 0010).
+const spawnTokens = new SpawnTokens();
 // The gate token of each guarded spawn, by PTY id: a closing terminal releases only its own spawn (ADR 0008).
 const spawnTokenByPty = new Map<string, string>();
 const hookServer = new HookServer(
@@ -329,7 +332,8 @@ const hookServer = new HookServer(
   (agentId, event, message, spawnToken) => {
     if (agentId && hookProvesTurn(event)) trustPromptGate.releaseOnTurn(agentId, spawnToken);
     workerWake.noteHook(agentId, event, message);
-  }
+  },
+  (agentId, spawnToken) => spawnTokens.check(agentId, spawnToken)
 );
 const memory = new MemoryManager(
   () => readConfig().harnessHome,
@@ -2666,6 +2670,8 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   const lead = leadIdOfSpawn(opts.id, opts.hive?.id);
   if (!lead.ok) return { ok: false, error: lead.error };
   const leadId = opts.hive?.id ?? opts.id;
+  // Minted before hive provisioning: the proxy bridge sidecar starts there and posts hooks too (ADR 0010).
+  const spawnToken = spawnTokens.next();
   let trustedLeadCwd: string | null = null;
   if (lead.leadId) {
     trustedLeadCwd = await roomWiring.trustedLeadFolder(lead.leadId, opts.cwd, await projectsWithin(LEAD_TRUST_WAIT_MS));
@@ -2834,7 +2840,8 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
           skillsDir: skillsResourceDir(),
           // The shared palace is mutated by the agent's own `mempalace` calls, so
           // the OS sandbox must let it through (empty when memory is off).
-          extraWritableDirs: [memory.env().MEMPALACE_PALACE_PATH].filter((p): p is string => !!p)
+          extraWritableDirs: [memory.env().MEMPALACE_PALACE_PATH].filter((p): p is string => !!p),
+          spawnToken
         }
       );
       opts.args = [...(opts.args ?? []), ...inj.args];
@@ -3073,11 +3080,13 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   if (trustedLeadCwd && opts.untrusted !== true && !(await roomWiring.stillLeadFolder(opts.cwd, trustedLeadCwd))) {
     return { ok: false, error: 'the project folder changed before the lead started' };
   }
-  // Only a hook carrying this spawn's token can release its gate (ADR 0008).
-  const spawnToken = guardTrustPrompt ? randomBytes(32).toString('hex') : null;
-  if (spawnToken) opts.env = { ...(opts.env ?? {}), HIVE_SPAWN_TOKEN: spawnToken };
+  // Hooks name their agent by the hive id; only a hook carrying this spawn's token
+  // speaks for it (ADR 0010) or releases its trust gate (ADR 0008).
+  const hookAgentId = opts.hive?.id;
+  if (hookAgentId || guardTrustPrompt) opts.env = { ...(opts.env ?? {}), HIVE_SPAWN_TOKEN: spawnToken };
   const res = ptyManager.spawn(opts, owner);
-  if (res.ok && spawnToken) {
+  if (res.ok && hookAgentId) spawnTokens.issue(hookAgentId, spawnToken);
+  if (res.ok && guardTrustPrompt) {
     trustPromptGate.hold(leadId, spawnToken);
     spawnTokenByPty.set(opts.id, spawnToken);
   }

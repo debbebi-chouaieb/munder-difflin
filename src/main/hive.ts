@@ -236,6 +236,15 @@ function shortRand(): string {
 const PROXY_BIND_ATTEMPTS = 3;
 const PROXY_BIND_BACKOFF_MS = [250, 750];
 
+interface ProxyBridgeConfig {
+  sock: string;
+  sessionId: string;
+  api: 'openai' | 'anthropic';
+  upstream: string;
+  /** Forwarded on every hook the sidecar posts for the agent (ADR 0010). */
+  spawnToken?: string;
+}
+
 const MINE_IGNORE_LINES = ['settings.json', 'cursor.json', 'inbox/', 'outbox/', '.codex/'];
 
 /** Idempotently ensure `<agentDir>/.gitignore` excludes the non-memory files.
@@ -733,6 +742,9 @@ export class HiveManager {
        *  MemPalace dir, which `mempalace` mutates). Absolute paths; ignored
        *  for providers without a sandbox. */
       extraWritableDirs?: string[];
+      /** This spawn's HIVE_SPAWN_TOKEN, handed to the proxy bridge sidecar, which
+       *  posts hooks for the agent from its own process (ADR 0010). */
+      spawnToken?: string;
     } = {}
   ): Promise<SpawnInjection> {
     const root = this.root();
@@ -929,7 +941,7 @@ export class HiveManager {
             // slow sidecar start past the 4s ceiling), so try a few times before
             // giving up: without this ONE bad moment at spawn cost the agent its
             // hive events for the whole session.
-            const port = await this.startProxyBridgeWithRetry(meta.id, { sock, sessionId, api: desc.api, upstream });
+            const port = await this.startProxyBridgeWithRetry(meta.id, { sock, sessionId, api: desc.api, upstream, spawnToken: opts.spawnToken });
             // Only redirect the CLI through the proxy if the sidecar actually bound a
             // port. On failure leave routing untouched → the CLI talks to its real
             // upstream directly (degraded: no synthesized hive events, but it still
@@ -1378,7 +1390,7 @@ export class HiveManager {
    *  listener. Resolves the bound port, or 0 once every attempt has failed. */
   private async startProxyBridgeWithRetry(
     agentId: string,
-    cfg: { sock: string; sessionId: string; api: 'openai' | 'anthropic'; upstream: string }
+    cfg: ProxyBridgeConfig
   ): Promise<number> {
     for (let attempt = 1; attempt <= PROXY_BIND_ATTEMPTS; attempt++) {
       const port = await this.startProxyBridge(agentId, cfg);
@@ -1393,7 +1405,7 @@ export class HiveManager {
 
   private startProxyBridge(
     agentId: string,
-    cfg: { sock: string; sessionId: string; api: 'openai' | 'anthropic'; upstream: string }
+    cfg: ProxyBridgeConfig
   ): Promise<number> {
     this.stopProxyBridge(agentId);
     const script = this.proxyShimPath();
@@ -1412,7 +1424,8 @@ export class HiveManager {
             AGENT_ID: agentId,
             UPSTREAM_BASE_URL: cfg.upstream,
             HIVE_PROXY_SESSION: cfg.sessionId,
-            HIVE_PROXY_API: cfg.api
+            HIVE_PROXY_API: cfg.api,
+            ...(cfg.spawnToken ? { HIVE_SPAWN_TOKEN: cfg.spawnToken } : {})
           },
           // Read the port line from stdout; never inherit stdio (the sidecar must
           // never write into the agent's terminal or leak request bodies to a log).
@@ -3195,6 +3208,7 @@ process.stdin.on('end', () => {
     tool_name: tc.name,
     tool_input: tc.args
   };
+  if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
   let resp = '';
   const done = () => {
     // Translate the HookServer's Claude-shaped reply into agy's contract. CRITICAL:
@@ -3240,6 +3254,7 @@ function post(payload) {
   try {
     if (!SOCK) return;
     payload.agent_id = payload.agent_id || AGENT;
+    if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
     var c = net.createConnection(SOCK, function () { try { c.end(JSON.stringify(payload) + '\\n'); } catch (e) {} });
     c.on('error', function () {});
   } catch (e) {}
@@ -3297,6 +3312,7 @@ function post(payload) {
   try {
     if (!SOCK) return;
     payload.agent_id = payload.agent_id || AGENT;
+    if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
     const c = createConnection(SOCK, () => { try { c.end(JSON.stringify(payload) + '\\n'); } catch (e) {} });
     c.on('error', () => {});
   } catch (e) {}
@@ -3336,6 +3352,7 @@ const { URL } = require('url');
 
 const SOCK = process.env.HIVE_SOCK;
 const AGENT_ID = process.env.AGENT_ID || null;
+const SPAWN_TOKEN = process.env.HIVE_SPAWN_TOKEN || null;
 const UPSTREAM = process.env.UPSTREAM_BASE_URL || '';
 const SESSION = process.env.HIVE_PROXY_SESSION || null;
 const API = process.env.HIVE_PROXY_API === 'anthropic' ? 'anthropic' : 'openai';
@@ -3355,6 +3372,7 @@ function ctxSize(model) {
 // Fire-and-forget emit of a shim-shaped payload to the hive socket. Never throws.
 function emit(payload) {
   if (!SOCK) return;
+  if (SPAWN_TOKEN) payload.spawn_token = SPAWN_TOKEN;
   try {
     const c = net.createConnection(SOCK, function () { c.end(JSON.stringify(payload) + '\\n'); });
     c.on('error', function () {});
@@ -3569,6 +3587,7 @@ process.stdin.on('end', () => {
     hook_event_name: names[gemini.hook_event_name] || gemini.hook_event_name || 'Unknown',
     agent_id: agentId
   };
+  if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
   let resp = '';
   const done = () => {
     let out = null;
@@ -3643,6 +3662,7 @@ process.stdin.on('end', () => {
     notification_type: grok.notificationType,
     message: grok.message
   };
+  if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
   let resp = '';
   const done = () => {
     let out = null;

@@ -7,7 +7,6 @@ Update this file whenever a work item starts, finishes, or a new gap appears.
 munder-difflin has no ZetaHub project, so its work is tracked here as local tickets. The `backlog` skill reads
 only this section. One bullet per item: what, then (source, date). Remove a bullet when it is done.
 
-- Hook token on every hook (ADR 0008 follow-up): only the trust prompt gate checks `spawn_token`; pause, halt, the breaker and the inbox still trust the payload's `agent_id`, and the agy, Gemini, Grok and proxy shims send no token (ADR 0008, 2026-11-23)
 - Hook agent id inside subagents: the cth-hook shim keeps an `agent_id` Claude already set. If current Claude Code tags hooks fired inside a subagent with the subagent's id, those events (and SubagentStop's idle handling in hooks.ts and useHive.ts) do not reach the lead's state; check what Claude sends before changing the rule (ADR 0008 audit, 2026-11-23)
 - Rooms trust revoke UI: add "Forget trust" to the room panel; it calls `roomWiring.revokeTrust`, which already drops stored trust and Claude's folder trust (ADR 0007, 2026-11-23)
 - Rooms small: the room panel and the board-count hook both read tickets on window focus (one extra read); the `hive:agentSpawned` payload is built in roomWiring.announceLead and three spawn-then-announce copies in index.ts: one builder in shared/roomLead.ts (Rooms-e review, 2026-11-23)

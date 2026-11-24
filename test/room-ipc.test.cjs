@@ -516,7 +516,11 @@ test('wiring: spawn core decides lead trust and applies the posture; automation 
   assert.match(src, /argsWithAutoModeFlag\(opts\.args \?\? \[\], spawnPosture\(opts\.untrusted === true, !!cfg\.autoMode\)\.autoMode, provider\)/);
   // The gate: held after an untrusted spawn, released by a real turn and by teardown, read by both automations.
   // Held only where Claude will show a prompt: not in a folder Claude already trusts.
-  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);[\s\S]*?const spawnToken = guardTrustPrompt \? randomBytes\(32\)\.toString\('hex'\) : null;\s*if \(spawnToken\) opts\.env = \{ \.\.\.\(opts\.env \?\? \{\}\), HIVE_SPAWN_TOKEN: spawnToken \};\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && spawnToken\) \{\s*trustPromptGate\.hold\(leadId, spawnToken\);\s*spawnTokenByPty\.set\(opts\.id, spawnToken\);/);
+  assert.match(src, /const guardTrustPrompt = claudeProvider && opts\.untrusted === true && \(!opts\.cwd \|\| await roomWiring\.leadMayMeetTrustPrompt\(opts\.cwd\)\);[\s\S]*?const hookAgentId = opts\.hive\?\.id;\s*if \(hookAgentId \|\| guardTrustPrompt\) opts\.env = \{ \.\.\.\(opts\.env \?\? \{\}\), HIVE_SPAWN_TOKEN: spawnToken \};\s*const res = ptyManager\.spawn\(opts, owner\);\s*if \(res\.ok && hookAgentId\) spawnTokens\.issue\(hookAgentId, spawnToken\);\s*if \(res\.ok && guardTrustPrompt\) \{\s*trustPromptGate\.hold\(leadId, spawnToken\);\s*spawnTokenByPty\.set\(opts\.id, spawnToken\);/);
+  // ADR 0010: one token per spawn, minted before hive provisioning (the proxy sidecar needs it), checked on every hook.
+  assert.match(src, /const leadId = opts\.hive\?\.id \?\? opts\.id;\s*\/\/[^\n]*\n\s*const spawnToken = spawnTokens\.next\(\);/);
+  assert.match(src, /extraWritableDirs: [^\n]*,\s*spawnToken\s*\}/);
+  assert.match(src, /\(agentId, spawnToken\) => spawnTokens\.check\(agentId, spawnToken\)\s*\);/);
   assert.match(src, /\(agentId, event, message, spawnToken\) => \{\s*if \(agentId && hookProvesTurn\(event\)\) trustPromptGate\.releaseOnTurn\(agentId, spawnToken\);/);
   assert.match(src, /const spawnToken = spawnTokenByPty\.get\(id\);\s*spawnTokenByPty\.delete\(id\);\s*if \(spawnToken\) trustPromptGate\.release\(agentId \?\? id, spawnToken\);/);
   assert.match(src, /a\?\.archived \|\| trustPromptGate\.blocks\(agentId\)\) continue;/);
