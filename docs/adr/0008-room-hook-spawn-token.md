@@ -45,5 +45,5 @@ We chose **A**, checked only where the gate is released by a turn:
   person answered the trust prompt, after which the gate has no job left.
 - The lead can print its environment, so the token may end up in its transcript. That is after trust, the gate
   is already released, and the next spawn gets a new token.
-- Other hook paths (pause, halt, breaker, inbox) still trust the payload's `agent_id`. Checking the token on
-  every hook needs it in all five shims; tracked in `docs/in-progress.md`.
+- Other hook paths (pause, halt, breaker, inbox) still trust the payload's `agent_id`. Closed by ADR 0010: every
+  spawn now has a token, checked on every hook.
