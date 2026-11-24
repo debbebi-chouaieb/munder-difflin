@@ -3131,7 +3131,14 @@ process.stdin.on('data', (d) => { data += d; });
 process.stdin.on('end', () => {
   let payload = {};
   try { payload = JSON.parse(data || '{}'); } catch (_) {}
-  if (!payload.agent_id) payload.agent_id = process.env.AGENT_ID || null;
+  // The hive agent is AGENT_ID. Claude sets agent_id on hooks fired inside a
+  // subagent; that id moves to subagent_id so guards still see the lead (ADR 0011).
+  if (process.env.AGENT_ID) {
+    if (payload.agent_id) payload.subagent_id = payload.agent_id;
+    payload.agent_id = process.env.AGENT_ID;
+  } else if (!payload.agent_id) {
+    payload.agent_id = null;
+  }
   // Proves the event comes from the current spawn of this agent (ADR 0008).
   if (process.env.HIVE_SPAWN_TOKEN) payload.spawn_token = process.env.HIVE_SPAWN_TOKEN;
   const sock = process.env.HIVE_SOCK;

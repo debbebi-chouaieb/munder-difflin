@@ -79,7 +79,7 @@ test('cth-hook shim forwards the spawn token', async (t) => {
   assert.equal(received[0].spawn_token, token);
 });
 
-test('cth-hook shim sends no token when the spawn has none, and keeps an agent_id Claude set', async (t) => {
+test('cth-hook shim sends no token when the spawn has none, and moves an agent_id Claude set to subagent_id (ADR 0011)', async (t) => {
   const hive = isolatedHive(t);
   const sock = hive.sockPath();
   const received = await listen(t, sock);
@@ -93,5 +93,43 @@ test('cth-hook shim sends no token when the spawn has none, and keeps an agent_i
   assert.equal(received.length, 2);
   assert.equal(received[0].agent_id, 'w1');
   assert.equal('spawn_token' in received[0], false);
-  assert.equal(received[1].agent_id, 'x');
+  assert.equal('subagent_id' in received[0], false, "the lead's own hooks carry no subagent id");
+  assert.equal(received[1].agent_id, 'w1', 'a hook fired inside a subagent belongs to the hive agent');
+  assert.equal(received[1].subagent_id, 'x');
+});
+
+test("cth-hook shim keeps Claude's agent_id when the session was not spawned by the hive", async (t) => {
+  const hive = isolatedHive(t);
+  const sock = hive.sockPath();
+  const received = await listen(t, sock);
+  const shim = path.join(hive.root(), 'bin', 'cth-hook.cjs');
+
+  const withId = await runShim(shim, { HIVE_SOCK: sock }, JSON.stringify({ hook_event_name: 'Stop', agent_id: 'x' }));
+  assert.equal(withId.code, 0, withId.stderr);
+  const withoutId = await runShim(shim, { HIVE_SOCK: sock }, JSON.stringify({ hook_event_name: 'Stop' }));
+  assert.equal(withoutId.code, 0, withoutId.stderr);
+
+  assert.equal(received.length, 2);
+  assert.equal(received[0].agent_id, 'x');
+  assert.equal('subagent_id' in received[0], false);
+  assert.equal(received[1].agent_id, null);
+});
+
+test('a tool call inside a subagent of a gated lead is denied (ADR 0011)', async (t) => {
+  const { HookServer } = loadTs('src/main/hooks.ts');
+  const hive = isolatedHive(t);
+  const control = {
+    shouldHalt: () => false,
+    takeSteer: () => null,
+    toolDecision: (agentId, tool) => ({ deny: agentId === 'lead--app' && tool === 'Bash', reason: 'gated' })
+  };
+  const server = new HookServer(hive, () => null, () => ({ notifications: false }), control, undefined);
+  const res = server.handle({
+    hook_event_name: 'PreToolUse',
+    agent_id: 'lead--app',
+    subagent_id: 'a2ea79d51ca8c1558',
+    agent_type: 'general-purpose',
+    tool_name: 'Bash'
+  });
+  assert.equal(res.hookSpecificOutput.permissionDecision, 'deny');
 });

@@ -511,7 +511,8 @@ export class HookServer {
       this.breaker?.recordCompactEnd(agentId);
     }
 
-    if ((event === 'Stop' || event === 'SubagentStop') && agentId) {
+    // Only Stop means the agent stopped; a subagent finishing is activity (ADR 0011).
+    if (event === 'Stop' && agentId) {
       // Respect any upstream Stop hook that already re-entered this boundary.
       if (p.stop_hook_active) { this.emit(agentId, event, p); return {}; }
       // Never turn unread hive mail into a forced continuation at Stop. That old
