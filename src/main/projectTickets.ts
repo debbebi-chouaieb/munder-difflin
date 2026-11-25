@@ -23,7 +23,7 @@ import {
 const MAX_CACHE_FILE_BYTES = 8 * 1024 * 1024;
 const MAX_LOCAL_FILE_BYTES = 1024 * 1024;
 
-export type TicketProject = Pick<Project, 'path' | 'zetahubKey' | 'localWorkPath' | 'showZetahub'>;
+export type TicketProject = Pick<Project, 'path' | 'zetahubKey' | 'zetahubKeySource' | 'localWorkPath' | 'showZetahub'>;
 
 type Log = (line: string) => void;
 
@@ -37,12 +37,21 @@ export function zetahubCacheDir(env: NodeJS.ProcessEnv = process.env, home = os.
 export async function readRoomTickets(project: TicketProject, log: Log, cacheDir: string = zetahubCacheDir()): Promise<RoomTickets> {
   // A hidden section reads nothing, so its wall board shows no count either.
   const [zetahub, local] = await Promise.all([
-    zetahubShown(project)
-      ? readZetahubTable(project.zetahubKey, cacheDir, log)
-      : Promise.resolve<ZetahubTable>({ ok: false, key: project.zetahubKey, reason: 'hidden' }),
+    zetahubTableFor(project, cacheDir, log),
     readLocalTable(project.path, project.localWorkPath, log)
   ]);
   return { zetahub, local };
+}
+
+/**
+ * A key named by the repo's own CLAUDE.md is only a suggestion (ADR 0010): a repo
+ * must not choose which project's cached tickets its room shows. Nothing is read
+ * until the person saves the key as their own.
+ */
+function zetahubTableFor(project: TicketProject, cacheDir: string, log: Log): Promise<ZetahubTable> {
+  if (!zetahubShown(project)) return Promise.resolve({ ok: false, key: project.zetahubKey, reason: 'hidden' });
+  if (project.zetahubKeySource === 'claude-md') return Promise.resolve({ ok: false, key: project.zetahubKey, reason: 'suggested' });
+  return readZetahubTable(project.zetahubKey, cacheDir, log);
 }
 
 export async function readZetahubTable(key: string | null, cacheDir: string, log: Log): Promise<ZetahubTable> {

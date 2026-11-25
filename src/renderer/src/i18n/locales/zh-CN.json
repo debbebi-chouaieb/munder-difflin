@@ -1519,6 +1519,11 @@
       "status": "状态",
       "more": "另有 {{count}} 项未显示。",
       "refreshHint": "运行 /zetahub-sync 刷新。",
+      "suggestedKey": {
+        "body": "此项目的 CLAUDE.md 建议了一个 ZetaHub 键。使用后才会显示其工单：",
+        "use": "使用此键",
+        "hint": "此键由仓库而非你选择。仅在项目正确时使用。"
+      },
       "zetahubReason": {
         "no-key": "此项目未设置 ZetaHub 项目编号。",
         "no-cache": "尚无 ZetaHub 缓存。请运行 /zetahub-sync。",

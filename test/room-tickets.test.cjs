@@ -212,3 +212,27 @@ test('room tickets: a hidden ZetaHub section reads no cache; auto follows the ke
   const forced = await readRoomTickets({ ...base, zetahubKey: null, showZetahub: true }, noLog, dir);
   assert.equal(forced.zetahub.reason, 'no-key', 'turned on without a key: the hint says why it is empty');
 });
+
+test('room tickets: a key from CLAUDE.md is a suggestion and reads no cache (ADR 0010)', async () => {
+  const dir = cache();
+  const { dir: proj } = project();
+  const base = { path: proj, zetahubKey: 'MCX-ANDR', localWorkPath: 'docs/open.md', showZetahub: null };
+  const suggested = await readRoomTickets({ ...base, zetahubKeySource: 'claude-md' }, noLog, dir);
+  assert.deepEqual(suggested.zetahub, { ok: false, key: 'MCX-ANDR', reason: 'suggested' });
+  assert.equal(suggested.local.ok, true, 'local items are still read');
+  const own = await readRoomTickets({ ...base, zetahubKeySource: 'user' }, noLog, dir);
+  assert.equal(own.zetahub.ok, true, 'the same key saved by the person is read');
+  const hidden = await readRoomTickets({ ...base, zetahubKeySource: 'claude-md', showZetahub: false }, noLog, dir);
+  assert.equal(hidden.zetahub.reason, 'hidden', 'a hidden section stays hidden');
+});
+
+test('room tickets: a suggested key never touches the cache folder', async () => {
+  const { dir: proj } = project();
+  const missing = path.join(tempDir('zh-none-'), 'not-there');
+  const res = await readRoomTickets(
+    { path: proj, zetahubKey: 'MDM', zetahubKeySource: 'claude-md', localWorkPath: null, showZetahub: true },
+    () => assert.fail('nothing to log: no cache file is opened'),
+    missing
+  );
+  assert.equal(res.zetahub.reason, 'suggested', 'not no-cache: the cache was not looked at');
+});

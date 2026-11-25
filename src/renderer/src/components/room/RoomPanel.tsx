@@ -55,6 +55,9 @@ export function RoomPanel({ projectId }: { projectId: string }) {
   const setTopHeight = useRoomPanel((s) => s.setTopHeight);
   const toggleLists = useRoomPanel((s) => s.toggleLists);
   const setShowZetahub = useProjects((s) => s.setShowZetahub);
+  const setZetahubKey = useProjects((s) => s.setZetahubKey);
+  // Re-read when a suggested key is accepted or the key changes: main reads by the saved key.
+  const zetahubKeyState = project ? `${project.zetahubKeySource ?? ''}:${project.zetahubKey ?? ''}` : '';
   const showZetahub = project ? zetahubShown(project) : false;
 
   const [sessions, setSessions] = useState<SessionSummary[] | null>(null);
@@ -100,7 +103,7 @@ export function RoomPanel({ projectId }: { projectId: string }) {
       // A load still in flight belongs to a closed or changed room: drop its answer.
       loadSeq.current++;
     };
-  }, [reload, projectShown, showZetahub]);
+  }, [reload, projectShown, showZetahub, zetahubKeyState]);
 
   // The lists and the terminal share the body; its height bounds the splitter.
   const bodyRef = useRef<HTMLDivElement | null>(null);
@@ -238,7 +241,7 @@ export function RoomPanel({ projectId }: { projectId: string }) {
             disabled={busy || leadRunning}
             onOpen={(sessionId) => void open({ sessionId })}
           />
-          <RoomTaskColumns tickets={tickets} errorKey={ticketsError} />
+          <RoomTaskColumns tickets={tickets} errorKey={ticketsError} onUseKey={(key) => void setZetahubKey(project.id, key)} />
           <RoomAgentList agents={project.agents} />
         </div>
         {leadRunning && leadId && (

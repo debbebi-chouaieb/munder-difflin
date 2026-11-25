@@ -1519,6 +1519,11 @@
       "status": "Status",
       "more": "{{count}} more not shown.",
       "refreshHint": "Run /zetahub-sync to refresh.",
+      "suggestedKey": {
+        "body": "This project's CLAUDE.md suggests a ZetaHub key. Its tickets show once you use it:",
+        "use": "Use this key",
+        "hint": "The repo chose this key, not you. Use it only if it is the right project."
+      },
       "zetahubReason": {
         "no-key": "No ZetaHub project key is set for this project.",
         "no-cache": "No ZetaHub cache yet. Run /zetahub-sync.",

@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import type { LocalItem, RoomTickets, ZetahubRow } from '@shared/ticketSources';
 import { formatSyncedAt, localColumns, zetahubColumns, type TaskColumn } from './roomPanelModel';
 import { heading, muted } from './roomStyles';
+import { PixelButton } from '../PixelButton';
 
 const ACCENTS: Record<string, string> = {
   todo: 'var(--cth-sky)',
@@ -21,7 +22,12 @@ const ACCENTS: Record<string, string> = {
  * local items by anyone with the repo. User text keeps its own direction
  * (`dir="auto"`); keys and counts are isolated (`<bdi>`).
  */
-export function RoomTaskColumns({ tickets, errorKey }: { tickets: RoomTickets | null; errorKey: string | null }) {
+export function RoomTaskColumns({ tickets, errorKey, onUseKey }: {
+  tickets: RoomTickets | null;
+  errorKey: string | null;
+  /** Saves a key the repo's CLAUDE.md suggested as the person's own (ADR 0010). */
+  onUseKey: (key: string) => void;
+}) {
   const { t, i18n } = useTranslation();
   if (errorKey) return <p style={muted}>{t(errorKey)}</p>;
   if (!tickets) return <p style={muted}>{t('room.loading')}</p>;
@@ -46,6 +52,8 @@ export function RoomTaskColumns({ tickets, errorKey }: { tickets: RoomTickets | 
               )}
               <p style={muted}>{t('room.tickets.refreshHint')}</p>
             </>
+          ) : zetahub.reason === 'suggested' && zetahub.key ? (
+            <SuggestedKey zetahubKey={zetahub.key} onUse={onUseKey} />
           ) : (
             <p style={muted}>{t(`room.tickets.zetahubReason.${zetahub.reason}`)}</p>
           )}
@@ -63,6 +71,19 @@ export function RoomTaskColumns({ tickets, errorKey }: { tickets: RoomTickets | 
         )}
       </section>
     </>
+  );
+}
+
+/** A key from the repo's CLAUDE.md: shown, never read, until the person takes it. */
+function SuggestedKey({ zetahubKey, onUse }: { zetahubKey: string; onUse: (key: string) => void }) {
+  const { t } = useTranslation();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <p style={{ ...muted, flex: '1 1 200px' }}>
+        {t('room.tickets.suggestedKey.body')} <bdi style={cardKey}>{zetahubKey}</bdi>
+      </p>
+      <PixelButton size="sm" title={t('room.tickets.suggestedKey.hint')} onClick={() => onUse(zetahubKey)}>{t('room.tickets.suggestedKey.use')}</PixelButton>
+    </div>
   );
 }
 

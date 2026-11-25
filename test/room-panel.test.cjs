@@ -345,7 +345,13 @@ test('room splitter: the lists can shrink to 0; the terminal keeps its minimum',
 test('the ZetaHub section is left out when main hid it', () => {
   const columns = read(`${ROOM_DIR}/RoomTaskColumns.tsx`);
   assert.match(columns, /reason === 'hidden'/);
-  assert.match(read(`${ROOM_DIR}/RoomPanel.tsx`), /\[reload, projectShown, showZetahub\]/, 'a toggle re-reads the tickets');
+  assert.match(read(`${ROOM_DIR}/RoomPanel.tsx`), /\[reload, projectShown, showZetahub, zetahubKeyState\]/, 'a toggle or a key change re-reads the tickets');
+});
+
+test('a suggested ZetaHub key shows a prompt and no board count (ADR 0010)', () => {
+  assert.match(read(`${ROOM_DIR}/RoomTaskColumns.tsx`), /reason === 'suggested'/);
+  const suggested = { zetahub: { ok: false, key: 'MDM', reason: 'suggested' }, local: { ok: true, path: 'x', items: [], total: 2 } };
+  assert.deepEqual(counts.boardCounts(suggested), { zetahub: null, local: 2 });
 });
 
 test('room store: hiding the lists remembers their height; showing restores it', () => {

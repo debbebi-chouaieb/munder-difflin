@@ -44,7 +44,7 @@ export interface Limited<T> {
 
 export type ZetahubTable =
   | { ok: true; key: string; rows: ZetahubRow[]; total: number; syncedAt: string | null }
-  | { ok: false; key: string | null; reason: 'hidden' | 'no-key' | 'no-cache' | 'not-cached' | 'unreadable' };
+  | { ok: false; key: string | null; reason: 'hidden' | 'suggested' | 'no-key' | 'no-cache' | 'not-cached' | 'unreadable' };
 
 /**
  * `unavailable` covers a missing file and a path that leaves the project on
