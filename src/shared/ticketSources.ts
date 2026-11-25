@@ -13,6 +13,7 @@ const MAX_TITLE_CHARS = 160;
 const MAX_LABEL_CHARS = 60;
 const MAX_ITEM_CHARS = 300;
 const MAX_SOURCE_CHARS = 80;
+const MAX_TIME_CHARS = 40;
 
 /** Statuses the cache script treats as closed. */
 const CLOSED_STATUSES = new Set(['Done', 'Closed', 'Cancelled', 'Canceled']);
@@ -27,6 +28,10 @@ export interface ZetahubRow {
   priority: string;
   assignee: string | null;
   milestone: string | null;
+  /** The parent ticket's display key, when the parent is in the same cache file. */
+  parentKey: string | null;
+  /** The cache's `updated_at`, as text (ISO 8601 from ZetaHub). */
+  updatedAt: string | null;
 }
 
 export interface LocalItem {
@@ -86,8 +91,10 @@ export function parseZetahubRows(
   milestones: Map<string, string>,
   limit = MAX_ZETAHUB_ROWS
 ): Limited<ZetahubRow> {
+  const records = [...jsonLines(tasksJsonl)];
+  const parentKeys = keysById(records);
   const open: Array<ZetahubRow & { number: number }> = [];
-  for (const r of jsonLines(tasksJsonl)) {
+  for (const r of records) {
     if (typeof r.status !== 'string' || CLOSED_STATUSES.has(r.status)) continue;
     const key = cleanText(r.key, MAX_LABEL_CHARS);
     const title = cleanText(r.title, MAX_TITLE_CHARS);
@@ -102,6 +109,8 @@ export function parseZetahubRows(
       priority: cleanText(r.priority, MAX_LABEL_CHARS) ?? '',
       assignee: typeof r.assignee_id === 'string' ? people.get(r.assignee_id) ?? null : null,
       milestone: typeof r.milestone_id === 'string' ? milestones.get(r.milestone_id) ?? null : null,
+      parentKey: typeof r.parent_task_id === 'string' ? parentKeys.get(r.parent_task_id) ?? null : null,
+      updatedAt: cleanText(r.updated_at, MAX_TIME_CHARS),
       number: ticketNumber(shown)
     });
   }
@@ -110,6 +119,16 @@ export function parseZetahubRows(
     || priorityRank(a.priority) - priorityRank(b.priority)
     || a.number - b.number);
   return { items: open.slice(0, limit).map(({ number: _n, ...row }) => row), total: open.length };
+}
+
+/** Every ticket's id to its display key, closed ones included: a parent can be done while its child is open. */
+function keysById(records: Array<Record<string, unknown>>): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const r of records) {
+    const key = cleanText(r.key, MAX_LABEL_CHARS);
+    if (typeof r.id === 'string' && key) map.set(r.id, displayTicketKey(key));
+  }
+  return map;
 }
 
 /** Bullets under "## No ticket yet", up to the next heading. Indented lines continue a bullet. */

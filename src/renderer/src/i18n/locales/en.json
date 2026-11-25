@@ -1545,6 +1545,23 @@
         "normal": "NORMAL"
       }
     },
+    "details": {
+      "open": "Open details",
+      "localTitle": "NO TICKET YET",
+      "close": "Close",
+      "copyKey": "Copy key",
+      "copied": "Copied",
+      "copyFailed": "Could not copy the key. Select it in the title instead.",
+      "type": "Type",
+      "status": "Status",
+      "priority": "Priority",
+      "assignee": "Assignee",
+      "milestone": "Milestone",
+      "parent": "Parent",
+      "updated": "Updated",
+      "source": "Source",
+      "noDescription": "The ZetaHub cache has no description. Open the ticket in ZetaHub to read it."
+    },
     "terminal": {
       "starting": "Starting the lead…",
       "stop": "Stop lead"

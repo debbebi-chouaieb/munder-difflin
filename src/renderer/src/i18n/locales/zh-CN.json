@@ -1545,6 +1545,23 @@
         "normal": "普通"
       }
     },
+    "details": {
+      "open": "查看详情",
+      "localTitle": "尚无工单",
+      "close": "关闭",
+      "copyKey": "复制键",
+      "copied": "已复制",
+      "copyFailed": "无法复制键。请在标题中选中它。",
+      "type": "类型",
+      "status": "状态",
+      "priority": "优先级",
+      "assignee": "负责人",
+      "milestone": "里程碑",
+      "parent": "父工单",
+      "updated": "更新时间",
+      "source": "来源",
+      "noDescription": "ZetaHub 缓存中没有描述。请在 ZetaHub 中打开工单查看。"
+    },
     "terminal": {
       "starting": "正在启动负责人…",
       "stop": "停止负责人"

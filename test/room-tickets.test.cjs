@@ -236,3 +236,23 @@ test('room tickets: a suggested key never touches the cache folder', async () =>
   );
   assert.equal(res.zetahub.reason, 'suggested', 'not no-cache: the cache was not looked at');
 });
+
+test('rows: parent key comes from the same file, closed parents included; updated time is cleaned (ADR 0010)', () => {
+  const tasks = [
+    line({ id: 'p-done', key: 'MDM--1', title: 'epic', status: 'Done' }),
+    line({ id: 'p-open', key: 'MDM--2', title: 'story', status: 'To Do' }),
+    line({ id: 'c1', key: 'MDM--3', title: 'child of done', status: 'To Do', parent_task_id: 'p-done', updated_at: '2026-11-24T10:00:00Z' }),
+    line({ id: 'c2', key: 'MDM--4', title: 'child of open', status: 'To Do', parent_task_id: 'p-open' }),
+    line({ id: 'c3', key: 'MDM--5', title: 'orphan', status: 'To Do', parent_task_id: 'not-in-file', updated_at: `x‮${'9'.repeat(80)}` }),
+    line({ id: 'c4', key: 'MDM--6', title: 'no parent', status: 'To Do', parent_task_id: null, updated_at: 7 })
+  ].join('\n');
+  const byKey = new Map(t.parseZetahubRows(tasks, new Map(), new Map()).items.map((r) => [r.key, r]));
+  assert.equal(byKey.get('MDM-3').parentKey, 'MDM-1', 'a closed parent still names its key');
+  assert.equal(byKey.get('MDM-3').updatedAt, '2026-11-24T10:00:00Z');
+  assert.equal(byKey.get('MDM-4').parentKey, 'MDM-2');
+  assert.equal(byKey.get('MDM-5').parentKey, null, 'a parent outside the file is unknown, not guessed');
+  assert.equal(byKey.get('MDM-5').updatedAt.length, 40);
+  assert.ok(!byKey.get('MDM-5').updatedAt.includes('‮'));
+  assert.equal(byKey.get('MDM-6').parentKey, null);
+  assert.equal(byKey.get('MDM-6').updatedAt, null, 'a non-string time is dropped');
+});

@@ -1,11 +1,11 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { cleanText } from '@shared/untrustedText';
 import { PixelPanel } from '../PixelPanel';
 import { PixelButton } from '../PixelButton';
-import { formatTokens } from './roomPanelModel';
-import { warning } from './roomStyles';
+import { formatTokens, ticketDetailFields, type TicketDetail } from './roomPanelModel';
+import { muted, warning } from './roomStyles';
 
 /** Same layer as the app's other modals. */
 const MODAL_Z = 500;
@@ -163,6 +163,68 @@ export function RoomCapDialog({ cap, closeName, onConfirm, onCancel }: {
       )}
     >
       <p style={{ margin: 0 }}>{t('room.cap.body', { cap, name: closeName })}</p>
+    </Dialog>
+  );
+}
+
+type CopyState = 'idle' | 'copied' | 'failed';
+
+/**
+ * A room card opened in full (ADR 0010): read only, built from the cache row or
+ * the local bullet the room already holds. Ticket text can be written by any
+ * ZetaHub user and local items by anyone with the repo, so every value is plain
+ * text in its own direction (`dir="auto"`); keys and times are isolated.
+ */
+export function TicketDetailsDialog({ detail, onClose }: { detail: TicketDetail; onClose: () => void }) {
+  const { t, i18n } = useTranslation();
+  const [copy, setCopy] = useState<CopyState>('idle');
+  const fields = ticketDetailFields(detail, i18n.language);
+  const ticketKey = detail.kind === 'zetahub' ? detail.row.key : null;
+  const text = detail.kind === 'zetahub' ? detail.row.title : detail.item.text;
+
+  const copyKey = (key: string) => {
+    navigator.clipboard.writeText(key).then(
+      () => setCopy('copied'),
+      (e: unknown) => {
+        console.error(`[room] copy of ticket key failed: ${e instanceof Error ? e.message : String(e)}`);
+        setCopy('failed');
+      }
+    );
+  };
+
+  return (
+    <Dialog
+      title={ticketKey ?? t('room.details.localTitle')}
+      onCancel={onClose}
+      actions={(
+        <>
+          <PixelButton variant="ghost" onClick={onClose}>{t('room.details.close')}</PixelButton>
+          {ticketKey && (
+            <PixelButton variant="secondary" onClick={() => copyKey(ticketKey)}>
+              {t(copy === 'copied' ? 'room.details.copied' : 'room.details.copyKey')}
+            </PixelButton>
+          )}
+        </>
+      )}
+    >
+      {detail.kind === 'local' && detail.item.high && (
+        <p style={{ ...warning, fontSize: 12 }}>{t('room.tickets.col.high')}</p>
+      )}
+      <p dir="auto" style={{ margin: 0, overflowWrap: 'anywhere', whiteSpace: 'pre-wrap' }}>{text}</p>
+      {fields.length > 0 && (
+        <dl style={{ margin: 0, display: 'grid', gridTemplateColumns: 'max-content 1fr', columnGap: 12, rowGap: 4, fontSize: 12 }}>
+          {fields.map((f) => (
+            <div key={f.labelKey} style={{ display: 'contents' }}>
+              <dt style={{ color: 'var(--cth-ink-500)' }}>{t(f.labelKey)}</dt>
+              <dd style={{ margin: 0, overflowWrap: 'anywhere' }}>
+                {f.isolate ? <bdi>{f.value}</bdi> : <span dir="auto">{f.value}</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      )}
+      {detail.kind === 'zetahub' && <p style={muted}>{t('room.details.noDescription')}</p>}
+      {copy === 'failed' && <p role="alert" style={{ ...warning, fontSize: 12 }}>{t('room.details.copyFailed')}</p>}
     </Dialog>
   );
 }

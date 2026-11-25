@@ -2,6 +2,7 @@
 // (ADR 0005, ADR 0006). The panel only renders what these return.
 
 import type { OpenTerminalRequest, OpenTerminalResult, RoomErrorCode, RoomResult } from '@shared/roomLead';
+import type { LocalItem, ZetahubRow } from '@shared/ticketSources';
 
 /** i18n key for a code; every code has a string in every locale (test/room-panel.test.cjs). */
 export function roomErrorKey(code: RoomErrorCode): string {
@@ -139,4 +140,36 @@ export const ROOM_TERMINAL_MIN_HEIGHT = 120;
 export function nextRoomTopHeight(startHeight: number, dragPx: number, panelHeight: number): number {
   const max = Math.max(0, panelHeight - ROOM_TERMINAL_MIN_HEIGHT);
   return Math.round(Math.min(max, Math.max(0, startHeight + dragPx)));
+}
+
+/** The card the person opened in the ticket details dialog (ADR 0010). */
+export type TicketDetail = { kind: 'zetahub'; row: ZetahubRow } | { kind: 'local'; item: LocalItem };
+
+/**
+ * One line of the details dialog. `labelKey` is an i18n key; `value` is untrusted
+ * text already cleaned by ticketSources; `isolate` marks a key or time that must
+ * keep its own direction inside an RTL layout.
+ */
+export interface DetailField {
+  labelKey: string;
+  value: string;
+  isolate: boolean;
+}
+
+/** The lines the dialog shows, in order; a field with no value is left out, not shown empty. */
+export function ticketDetailFields(detail: TicketDetail, locale: string): DetailField[] {
+  const fields: Array<[string, string | null, boolean]> = detail.kind === 'zetahub'
+    ? [
+        ['room.details.type', detail.row.type || null, false],
+        ['room.details.status', detail.row.status, false],
+        ['room.details.priority', detail.row.priority || null, false],
+        ['room.details.assignee', detail.row.assignee, false],
+        ['room.details.milestone', detail.row.milestone, false],
+        ['room.details.parent', detail.row.parentKey, true],
+        ['room.details.updated', detail.row.updatedAt && formatSyncedAt(detail.row.updatedAt, locale), true]
+      ]
+    : [['room.details.source', detail.item.source, true]];
+  return fields
+    .filter((f): f is [string, string, boolean] => typeof f[1] === 'string' && f[1].length > 0)
+    .map(([labelKey, value, isolate]) => ({ labelKey, value, isolate }));
 }

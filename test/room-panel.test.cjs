@@ -368,3 +368,46 @@ test('room store: hiding the lists remembers their height; showing restores it',
   st().toggleLists(0);
   assert.equal(st().topHeight, 260, 'dragged shut: show returns to the last open height');
 });
+
+// ── ticket details (ADR 0010) ────────────────────────────────────────────────
+
+const ROW = {
+  key: 'MDM-7', title: 'Fix it', type: 'Task', status: 'To Do', priority: '', assignee: 'Ana',
+  milestone: null, parentKey: 'MDM-1', updatedAt: 'not a date'
+};
+
+test('details: ZetaHub fields in order, empty ones left out', () => {
+  const fields = model.ticketDetailFields({ kind: 'zetahub', row: ROW }, 'en');
+  assert.deepEqual(fields.map((f) => f.labelKey), [
+    'room.details.type', 'room.details.status', 'room.details.assignee', 'room.details.parent', 'room.details.updated'
+  ]);
+  assert.equal(fields.find((f) => f.labelKey === 'room.details.updated').value, 'not a date', 'an unparsable time is shown as is');
+  assert.equal(fields.find((f) => f.labelKey === 'room.details.parent').isolate, true);
+  assert.equal(fields.find((f) => f.labelKey === 'room.details.assignee').isolate, false);
+});
+
+test('details: a local item shows its source only when it has one', () => {
+  assert.deepEqual(model.ticketDetailFields({ kind: 'local', item: { text: 'x', source: 'audit, 2026-11-23', high: true } }, 'en'),
+    [{ labelKey: 'room.details.source', value: 'audit, 2026-11-23', isolate: true }]);
+  assert.deepEqual(model.ticketDetailFields({ kind: 'local', item: { text: 'x', source: null, high: false } }, 'en'), []);
+});
+
+test('details: every field label exists in every language', () => {
+  const full = { ...ROW, priority: 'High', milestone: 'M1', updatedAt: '2026-11-24T10:00:00Z' };
+  const keys = [
+    ...model.ticketDetailFields({ kind: 'zetahub', row: full }, 'en'),
+    ...model.ticketDetailFields({ kind: 'local', item: { text: 'x', source: 's', high: true } }, 'en')
+  ].map((f) => f.labelKey);
+  assert.equal(new Set(keys).size, 8);
+  for (const [code, tree] of LOCALES) for (const key of keys) assert.equal(typeof lookup(tree, key), 'string', `${code}: ${key}`);
+});
+
+test('details: cards are buttons that open the dialog; Close is its first action', () => {
+  const columns = read(`${ROOM_DIR}/RoomTaskColumns.tsx`);
+  assert.match(columns, /<button[\s\S]*?type="button"[\s\S]*?onClick=\{\(\) => onOpen\(item\)\}/);
+  const dialogs = read(`${ROOM_DIR}/RoomDialogs.tsx`);
+  const body = dialogs.slice(dialogs.indexOf('export function TicketDetailsDialog'));
+  const actions = body.slice(body.indexOf('actions={('));
+  assert.ok(actions.indexOf("room.details.close") < actions.indexOf("room.details.copyKey"), 'the safe action is first');
+});
+

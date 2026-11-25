@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { LocalItem, RoomTickets, ZetahubRow } from '@shared/ticketSources';
-import { formatSyncedAt, localColumns, zetahubColumns, type TaskColumn } from './roomPanelModel';
+import { formatSyncedAt, localColumns, zetahubColumns, type TaskColumn, type TicketDetail } from './roomPanelModel';
+import { TicketDetailsDialog } from './RoomDialogs';
 import { heading, muted } from './roomStyles';
 import { PixelButton } from '../PixelButton';
 
@@ -29,12 +30,14 @@ export function RoomTaskColumns({ tickets, errorKey, onUseKey }: {
   onUseKey: (key: string) => void;
 }) {
   const { t, i18n } = useTranslation();
+  const [detail, setDetail] = useState<TicketDetail | null>(null);
   if (errorKey) return <p style={muted}>{t(errorKey)}</p>;
   if (!tickets) return <p style={muted}>{t('room.loading')}</p>;
   const { zetahub, local } = tickets;
   const zetahubHidden = !zetahub.ok && zetahub.reason === 'hidden';
   return (
     <>
+      {detail && <TicketDetailsDialog detail={detail} onClose={() => setDetail(null)} />}
       {!zetahubHidden && (
         <section style={section}>
           <h3 style={heading}>
@@ -46,7 +49,7 @@ export function RoomTaskColumns({ tickets, errorKey, onUseKey }: {
               {zetahub.syncedAt && (
                 <p style={muted}>{t('room.tickets.syncedAt', { time: formatSyncedAt(zetahub.syncedAt, i18n.language) })}</p>
               )}
-              <Columns columns={zetahubColumns(zetahub.rows)} itemKey={(r) => r.key} renderCard={(r, colId) => <ZetahubCard row={r} showStatus={colId === 'other'} />} />
+              <Columns columns={zetahubColumns(zetahub.rows)} itemKey={(r) => r.key} onOpen={(row) => setDetail({ kind: 'zetahub', row })} renderCard={(r, colId) => <ZetahubCard row={r} showStatus={colId === 'other'} />} />
               {zetahub.total > zetahub.rows.length && (
                 <p style={muted}>{t('room.tickets.more', { count: zetahub.total - zetahub.rows.length })}</p>
               )}
@@ -62,7 +65,7 @@ export function RoomTaskColumns({ tickets, errorKey, onUseKey }: {
       <section style={section}>
         <h3 style={heading}>{t('room.tickets.local')}{local.ok && <> (<bdi>{local.total}</bdi>)</>}</h3>
         {local.ok ? (
-          <Columns columns={localColumns(local.items)} itemKey={(_item, i) => String(i)} renderCard={(item) => <LocalCard item={item} />} />
+          <Columns columns={localColumns(local.items)} itemKey={(_item, i) => String(i)} onOpen={(item) => setDetail({ kind: 'local', item })} renderCard={(item) => <LocalCard item={item} />} />
         ) : (
           <p style={muted}>{t(`room.tickets.localReason.${local.reason}`)}</p>
         )}
@@ -87,9 +90,10 @@ function SuggestedKey({ zetahubKey, onUse }: { zetahubKey: string; onUse: (key: 
   );
 }
 
-function Columns<T>({ columns, itemKey, renderCard }: {
+function Columns<T>({ columns, itemKey, onOpen, renderCard }: {
   columns: TaskColumn<T>[];
   itemKey: (item: T, index: number) => string;
+  onOpen: (item: T) => void;
   renderCard: (item: T, columnId: string) => ReactNode;
 }) {
   const { t } = useTranslation();
@@ -111,12 +115,21 @@ function Columns<T>({ columns, itemKey, renderCard }: {
           <div style={{ padding: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
             {col.items.length === 0 && <div style={{ fontSize: 12, color: 'var(--cth-ink-300)', textAlign: 'center', padding: '6px 0' }}>—</div>}
             {col.items.map((item, i) => (
-              <div key={itemKey(item, i)} style={{ display: 'flex', background: 'var(--cth-paper-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-100)' }}>
+              <button
+                key={itemKey(item, i)}
+                type="button"
+                onClick={() => onOpen(item)}
+                title={t('room.details.open')}
+                style={{
+                  display: 'flex', padding: 0, border: 'none', cursor: 'pointer', font: 'inherit', textAlign: 'start',
+                  background: 'var(--cth-paper-100)', boxShadow: 'inset 0 0 0 1px var(--cth-ink-100)'
+                }}
+              >
                 <span style={{ width: 4, flexShrink: 0, background: ACCENTS[col.id] }} />
                 <span style={{ flex: 1, minWidth: 0, padding: '4px 6px', display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {renderCard(item, col.id)}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </div>
