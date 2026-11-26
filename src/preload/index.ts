@@ -663,6 +663,9 @@ const api = {
     ipcRenderer.invoke('room:openTerminal', projectId, request ?? null),
   roomCloseTerminal: (projectId: string): Promise<RoomDone> =>
     ipcRenderer.invoke('room:closeTerminal', projectId),
+  /** Drops the room's stored trust and Claude's folder trust; refused while its lead runs (ADR 0012). */
+  roomForgetTrust: (projectId: string): Promise<RoomDone> =>
+    ipcRenderer.invoke('room:forgetTrust', projectId),
   /** A room lead's terminal went on or off this window's screen; main stops leads no window shows (ADR 0005). */
   roomLeadShown: (agentId: string, shown: boolean): void =>
     ipcRenderer.send('room:leadShown', agentId, shown),

@@ -105,6 +105,13 @@ test('selecting an agent closes the room', () => {
   assert.match(select, /useRoomPanel\.getState\(\)\.clearRoom\(\)/);
 });
 
+test('"Forget trust" is offered only for a trusted project with no lead running', () => {
+  assert.equal(model.canForgetTrust(true, false), true);
+  assert.equal(model.canForgetTrust(true, true), false, 'the person stops the lead first');
+  assert.equal(model.canForgetTrust(false, false), false);
+  assert.equal(model.canForgetTrust(false, true), false);
+});
+
 // ── strings ──────────────────────────────────────────────────────────────────
 
 test('every room error code has a string in every language', () => {
@@ -115,7 +122,7 @@ test('every room error code has a string in every language', () => {
 });
 
 test('every room string the panel uses exists in every language', () => {
-  const keys = new Set(['queueComposer.heldTrust', 'room.trust.notSaved']);
+  const keys = new Set(['queueComposer.heldTrust', 'room.trust.notSaved', 'room.trust.forgotten']);
   for (const [, src] of roomSources) for (const m of src.matchAll(/\bt\('((?:room|agentDetail)\.[\w.-]+)'/g)) keys.add(m[1]);
   // Keys built from a reason: the reasons ZetahubTable and LocalTable allow (src/shared/ticketSources.ts).
   for (const r of ['no-key', 'no-cache', 'not-cached', 'unreadable']) keys.add(`room.tickets.zetahubReason.${r}`);

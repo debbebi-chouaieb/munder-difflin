@@ -21,7 +21,7 @@ import { RoomCapDialog, RoomLargeSessionDialog, RoomTrustDialog } from './RoomDi
 import { LeadTerminal } from './LeadTerminal';
 import { muted, warning } from './roomStyles';
 import {
-  afterLargeAnswer, nextRoomTopHeight, openStep, readErrorKey, roomErrorKey, showZetahubSetting, withTrust, type OpenStep
+  afterLargeAnswer, canForgetTrust, nextRoomTopHeight, openStep, readErrorKey, roomErrorKey, showZetahubSetting, withTrust, type OpenStep
 } from './roomPanelModel';
 
 type Question = Extract<OpenStep, { kind: 'ask-trust' | 'confirm-large' | 'confirm-cap' }>;
@@ -158,6 +158,21 @@ export function RoomPanel({ projectId }: { projectId: string }) {
     }
   };
 
+  const forgetTrust = async () => {
+    // No local trust state: the button goes when main pushes the snapshot without trust.
+    setBusy(true);
+    setNotice(null);
+    try {
+      const res = await window.cth.roomForgetTrust(projectId);
+      setNotice(res.ok ? { key: 'room.trust.forgotten', warn: false } : { key: roomErrorKey(res.error), warn: true });
+    } catch (e) {
+      logError(`[room] forget trust for ${projectId} failed: ${e instanceof Error ? e.message : String(e)}`);
+      setNotice({ key: roomErrorKey('forget-failed'), warn: true });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const answer = (next: OpenTerminalRequest) => { setQuestion(null); void open(next); };
 
   /** Stops the offered lead (and drops its pooled terminal), then retries the same open. */
@@ -220,6 +235,11 @@ export function RoomPanel({ projectId }: { projectId: string }) {
         {leadRunning && (
           <PixelButton size="sm" variant="ghost" onClick={() => toggleLists(topHeight)}>
             {topHeight > 0 ? t('room.lists.hide') : t('room.lists.show')}
+          </PixelButton>
+        )}
+        {canForgetTrust(project.trusted, leadRunning) && (
+          <PixelButton size="sm" variant="ghost" disabled={busy} onClick={() => void forgetTrust()} title={t('room.trust.forgetHint')}>
+            {t('room.trust.forget')}
           </PixelButton>
         )}
         {stopButton}

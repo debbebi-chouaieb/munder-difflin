@@ -9,6 +9,11 @@ export function roomErrorKey(code: RoomErrorCode): string {
   return `room.errors.${code}`;
 }
 
+/** "Forget trust" is offered for a trusted project whose lead is not running (ADR 0012). */
+export function canForgetTrust(trusted: boolean, leadRunning: boolean): boolean {
+  return trusted && !leadRunning;
+}
+
 /**
  * The error key for one settled room read. A rejected call (main gone, IPC torn
  * down) is logged with its reason and shown as a read failure.

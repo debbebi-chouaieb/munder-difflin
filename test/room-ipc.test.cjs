@@ -24,7 +24,7 @@ const PROJECT = {
 };
 
 function deps(over = {}) {
-  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [], touch: [] };
+  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [], forget: [], touch: [] };
   const running = new Set(over.running ?? []);
   const sessions = {
     [ABC]: { id: ABC, large: false, contextTokens: 10 },
@@ -43,6 +43,7 @@ function deps(over = {}) {
     patchProject: (id, patch) => { calls.patch.push([id, patch]); return over.patchOk ?? true; },
     trustState: async (p) => over.trustState ?? (p.trusted ? 'trusted' : 'none'),
     revokeTrust: async (p, cwd) => { calls.revoke.push([p.id, cwd]); return true; },
+    forgetTrust: async (p, cwd) => { calls.forget.push([p.id, cwd]); return over.forgetOk ?? true; },
     repoRoot: async () => ('repoRoot' in over ? over.repoRoot : ROOT),
     killLead: (id) => { calls.kill.push(id); if (over.killFails) return { ok: false, error: 'EPERM' }; running.delete(id); return { ok: true }; },
     archiveLead: (id) => { calls.archive.push(id); },
@@ -487,6 +488,104 @@ test('close: a failed kill is a code, the detail is logged', async () => {
   assert.ok(calls.log.some((m) => m.includes('EPERM')));
 });
 
+// ─── forget trust (ADR 0012) ─────────────────────────────────────────────────
+
+test('forget trust: drops stored and Claude trust for the resolved folder', async () => {
+  const { d, calls } = deps();
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: true, done: true });
+  assert.deepEqual(calls.forget, [['app', 'D:/ws/App-real']]);
+});
+
+test('forget trust: a moved folder still drops the stored trust', async () => {
+  const { d, calls } = deps({ moved: true });
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: true, done: true });
+  assert.deepEqual(calls.forget, [['app', null]]);
+});
+
+test('forget trust: refused while the lead runs, nothing dropped', async () => {
+  const { d, calls } = deps({ running: ['lead--app'] });
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: false, error: 'busy' });
+  assert.deepEqual(calls.forget, []);
+});
+
+test('forget trust: refused while an open is in flight', async () => {
+  const { d, calls } = deps();
+  let release;
+  d.spawnLead = (opts) => new Promise((resolve) => { calls.spawn.push(opts); release = () => resolve({ ok: true }); });
+  const h = createRoomHandlers(d);
+  const opening = h.openTerminal('app', null, null);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'busy' });
+  release();
+  await opening;
+  assert.deepEqual(calls.forget, []);
+});
+
+test('forget trust: an open while trust is being dropped waits for the person to retry', async () => {
+  const { d, calls } = deps();
+  let release;
+  d.forgetTrust = (p, cwd) => new Promise((resolve) => { calls.forget.push([p.id, cwd]); release = () => resolve(true); });
+  const h = createRoomHandlers(d);
+  const forgetting = h.forgetTrust('app');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(await h.openTerminal('app', null, null), { ok: false, error: 'busy' });
+  assert.equal(calls.spawn.length, 0);
+  release();
+  assert.deepEqual(await forgetting, { ok: true, done: true });
+});
+
+test('forget trust: an untrusted project leaves Claude\'s own folder trust alone', async () => {
+  const { d, calls } = deps({ project: { trusted: false } });
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: true, done: true });
+  assert.deepEqual(calls.forget, []);
+});
+
+test('forget trust: a part not saved is a code, and the room can retry', async () => {
+  const { d, calls } = deps({ forgetOk: false });
+  const h = createRoomHandlers(d);
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'forget-failed' });
+  d.forgetTrust = async (p, cwd) => { calls.forget.push([p.id, cwd]); return true; };
+  assert.deepEqual(await h.forgetTrust('app'), { ok: true, done: true });
+  assert.equal(calls.forget.length, 2);
+});
+
+test('forget trust: a throw is a code, the detail is logged, and the room is not left locked', async () => {
+  const { d, calls } = deps();
+  d.forgetTrust = async () => { throw new Error('EBUSY ~/.claude.json'); };
+  const h = createRoomHandlers(d);
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'forget-failed' });
+  assert.ok(calls.log.some((m) => m.includes('EBUSY')));
+  assert.equal((await h.openTerminal('app', null, null)).ok, true, 'opens work again');
+});
+
+test('forget trust: a second forget while one runs is refused', async () => {
+  const { d, calls } = deps();
+  let release;
+  d.forgetTrust = (p, cwd) => new Promise((resolve) => { calls.forget.push([p.id, cwd]); release = () => resolve(true); });
+  const h = createRoomHandlers(d);
+  const first = h.forgetTrust('app');
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'busy' });
+  release();
+  assert.deepEqual(await first, { ok: true, done: true });
+  assert.equal(calls.forget.length, 1);
+});
+
+test("forget trust: never uses main's own revoke, which drops stored trust first", async () => {
+  const { d, calls } = deps();
+  await createRoomHandlers(d).forgetTrust('app');
+  assert.deepEqual(calls.revoke, []);
+});
+
+test('forget trust: an unknown or invalid id is refused; a disabled project can still forget', async () => {
+  const { d, calls } = deps({ project: { enabled: false } });
+  const h = createRoomHandlers(d);
+  assert.deepEqual(await h.forgetTrust('nope'), { ok: false, error: 'unknown-project' });
+  assert.deepEqual(await h.forgetTrust({ id: 'app' }), { ok: false, error: 'unknown-project' });
+  assert.deepEqual(await h.forgetTrust('app'), { ok: true, done: true });
+  assert.equal(calls.forget.length, 1);
+});
+
 test('read errors become a code, not a throw', async () => {
   const { d } = deps();
   d.sessions.list = async () => { throw new Error('EACCES D:/secret/path'); };
@@ -500,6 +599,7 @@ test('preload sends only a project id and a request object for room calls', () =
   const calls = src.match(/invoke\('room:[A-Za-z]+'[^)]*\)/g) ?? [];
   assert.deepEqual(calls.sort(), [
     "invoke('room:closeTerminal', projectId)",
+    "invoke('room:forgetTrust', projectId)",
     "invoke('room:openTerminal', projectId, request ?? null)",
     "invoke('room:sessions', projectId)",
     "invoke('room:tickets', projectId)"

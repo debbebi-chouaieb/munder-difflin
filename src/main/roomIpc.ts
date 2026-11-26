@@ -39,6 +39,8 @@ export interface RoomDeps {
   trustState: (project: Project, cwd: string) => Promise<'trusted' | 'stale' | 'unknown' | 'none'>;
   /** Drops the project's trust and Claude's folder trust; false when a part was not saved. */
   revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  /** The person's "Forget trust": stored trust is dropped only after Claude's (ADR 0012). */
+  forgetTrust: (project: Project, cwd: string | null) => Promise<boolean>;
   /** The stored form of the repo's root commits in `cwd`, or null (no git, no commit). */
   repoRoot: (cwd: string) => Promise<string | null>;
   killLead: (agentId: string) => { ok: boolean; error?: string };
@@ -64,11 +66,16 @@ export interface RoomHandlers {
    * leaves the lead running and answers `busy`. Idle shutdown passes its re-check.
    */
   closeTerminal: (projectId: unknown, onlyIf?: () => boolean) => Promise<RoomDone>;
+  /** Drops the project's stored trust and Claude's folder trust (ADR 0012); refused while its lead runs or opens. */
+  forgetTrust: (projectId: unknown) => Promise<RoomDone>;
 }
 
 export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
   // One open per room at a time; a second click shares the first one's result.
   const opening = new Map<string, { request: OpenRequest; result: Promise<OpenTerminalResult>; sender: WebContents | null }>();
+  // Rooms whose "Forget trust" runs. Only opens and forgets check it: a close never reads
+  // trust, and main's own revokes run inside an open, which a forget already refuses.
+  const forgetting = new Set<string>();
 
   /** Rooms exist for enabled projects only; closing also works after a project is disabled. */
   const findProject = async (projectId: unknown, enabledOnly: boolean): Promise<Project | null> => {
@@ -192,6 +199,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         deps.announceLead(agentId, `${project.name} lead`, (await deps.resolveProjectCwd(project.path)) ?? project.path, sender);
         return { ok: true, agentId, alreadyRunning: true, untrusted: !project.trusted };
       }
+      if (forgetting.has(project.id)) return { ok: false, error: 'busy' };
       const pending = opening.get(project.id);
       // A double click shares the open; a different request waits for the person to retry.
       if (pending) {
@@ -231,6 +239,31 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         return { ok: false, error: 'stop-failed' };
       }
       return { ok: true, done: true };
+    },
+
+    async forgetTrust(projectId) {
+      const project = await findProject(projectId, false);
+      if (!project) return { ok: false, error: 'unknown-project' };
+      // A running lead already loaded the folder's hooks and MCP servers, and its
+      // hook gate reads trust on every hook: the person stops it first.
+      if (forgetting.has(project.id) || opening.has(project.id) || deps.isRunning(leadAgentIdFor(project))) {
+        return { ok: false, error: 'busy' };
+      }
+      // Nothing of ours to drop. Claude's own trust for the folder may be the person's, so it stays.
+      if (!project.trusted) return { ok: true, done: true };
+      forgetting.add(project.id);
+      try {
+        const cwd = await deps.resolveProjectCwd(project.path);
+        // A part not saved leaves the project trusted: the button stays and the person retries.
+        if (!(await deps.forgetTrust(project, cwd))) return { ok: false, error: 'forget-failed' };
+        deps.log(`[room] trust for ${project.id} forgotten`);
+        return { ok: true, done: true };
+      } catch (e) {
+        deps.log(`[room] forget trust failed for ${project.id}: ${errText(e)}`);
+        return { ok: false, error: 'forget-failed' };
+      } finally {
+        forgetting.delete(project.id);
+      }
     }
   };
 }
@@ -241,6 +274,7 @@ export function registerRoomIpc(handlers: RoomHandlers): void {
   ipcMain.handle('room:openTerminal', (evt, projectId: unknown, request: unknown) =>
     handlers.openTerminal(projectId, request, evt.sender));
   ipcMain.handle('room:closeTerminal', (_evt, projectId: unknown) => handlers.closeTerminal(projectId));
+  ipcMain.handle('room:forgetTrust', (_evt, projectId: unknown) => handlers.forgetTrust(projectId));
 }
 
 function errText(e: unknown): string {

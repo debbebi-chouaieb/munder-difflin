@@ -7,7 +7,9 @@ Update this file whenever a work item starts, finishes, or a new gap appears.
 munder-difflin has no ZetaHub project, so its work is tracked here as local tickets. The `backlog` skill reads
 only this section. One bullet per item: what, then (source, date). Remove a bullet when it is done.
 
-- Rooms trust revoke UI: add "Forget trust" to the room panel; it calls `roomWiring.revokeTrust`, which already drops stored trust and Claude's folder trust (ADR 0007, 2026-11-23)
+- Rooms forget trust: `pty:spawn` (Restore team, card restart) can start a lead while `room:forgetTrust` runs; it skips the forget lock, and its pre-accept can race the `~/.claude.json` rewrite and leave Claude's folder trust. Share a per-project lock with spawnAgentCore's lead branch; fits the pty:spawn trust review (from Forget trust audit, 2026-11-26)
+- Rooms orphaned Claude trust: when main's own revokeTrust (stale repo, failed spawn) drops stored trust but cannot write `~/.claude.json`, the app-written folder trust stays and no button can clear it (project reads untrusted). Retry on the next open or forget (from Forget trust audit, 2026-11-26)
+- Rooms tests: no behaviour test drives the Forget trust button in RoomPanel; only `canForgetTrust` is tested (from Forget trust review, 2026-11-26)
 - Rooms small: the room panel and the board-count hook both read tickets on window focus (one extra read); the `hive:agentSpawned` payload is built in roomWiring.announceLead and three spawn-then-announce copies in index.ts: one builder in shared/roomLead.ts (Rooms-e review, 2026-11-23)
 - Rooms limits UI: `roomPtyCap` and `roomIdleMinutes` are config-file only; add them to Settings if people need to change them. The cap counts least recently used by last room open or write, both reset on app restart (Rooms-d, 2026-11-23)
 - Rooms local tickets on Windows: no O_NOFOLLOW, so the open of a file link swapped in after the lstat walk can still touch a network share (content is never read); a parent junction under the workspace root is followed by `resolveAllowedRoot` before the network check (Rooms-e audit, 2026-11-23)

@@ -58,6 +58,12 @@ export interface RoomWiring {
    * the next lead asks again. False when any part could not be saved.
    */
   revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  /**
+   * The person's "Forget trust" (ADR 0012): drops Claude's folder trust first and
+   * the stored trust only once that worked, so a failure leaves the project
+   * trusted and the person can retry. False when any part could not be saved.
+   */
+  forgetTrust: (project: Project, cwd: string | null) => Promise<boolean>;
   /** Notes that the person used this lead's terminal now; the room cap stops the least recently used. */
   touchLead: (agentId: string) => void;
   /** Epoch ms of the last use, or 0 when never seen since the app started. */
@@ -167,6 +173,20 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
     }
   };
 
+  /** Pre-accept wrote the folder the lead ran in, the resolved one; the stored spelling goes too. */
+  const forgetClaudeTrustOf = async (project: Project, cwd: string | null): Promise<boolean> => {
+    const folders = cwd && !samePath(cwd, project.path) ? [project.path, cwd] : [project.path];
+    let forgot = true;
+    for (const folder of folders) forgot = (await forgetClaudeFolderTrust(folder)) && forgot;
+    return forgot;
+  };
+
+  const dropStoredTrust = (project: Project): boolean => {
+    const saved = deps.patchProject(project.id, { trustedPath: null, trustedRoot: null });
+    if (!saved) deps.log(`[room] could not drop trust for ${project.id}`);
+    return saved;
+  };
+
   const leadWindow = (agentId: string): WebContents | null => {
     const owner = leadOwners.get(agentId);
     return owner && !owner.isDestroyed() ? owner : deps.liveWebContents();
@@ -211,14 +231,15 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
       return trustedRootFrom(out) === project.trustedRoot ? 'trusted' : 'stale';
     },
 
+    // Main's own revokes (stale repo, failed spawn) drop stored trust first: it must go even when Claude's config cannot.
     async revokeTrust(project, cwd) {
-      const saved = deps.patchProject(project.id, { trustedPath: null, trustedRoot: null });
-      if (!saved) deps.log(`[room] could not drop trust for ${project.id}`);
-      // Pre-accept wrote the folder the lead ran in, the resolved one; drop the stored spelling too.
-      const folders = cwd && !samePath(cwd, project.path) ? [project.path, cwd] : [project.path];
-      let claudeForgot = true;
-      for (const folder of folders) claudeForgot = (await forgetClaudeFolderTrust(folder)) && claudeForgot;
-      return saved && claudeForgot;
+      const saved = dropStoredTrust(project);
+      return (await forgetClaudeTrustOf(project, cwd)) && saved;
+    },
+
+    async forgetTrust(project, cwd) {
+      if (!(await forgetClaudeTrustOf(project, cwd))) return false;
+      return dropStoredTrust(project);
     },
 
     touchLead(agentId) {

@@ -23,6 +23,7 @@ export const ROOM_ERROR_CODES = [
   'session-not-found',
   'spawn-failed',
   'stop-failed',
+  'forget-failed',
   'read-failed',
   'busy',
   'room-cap'

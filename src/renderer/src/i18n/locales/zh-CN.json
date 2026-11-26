@@ -1467,6 +1467,7 @@
       "session-not-found": "无法恢复该会话。",
       "spawn-failed": "无法启动负责人终端。",
       "stop-failed": "无法停止负责人终端。",
+      "forget-failed": "未能完全取消信任，请重试。",
       "read-failed": "无法读取此项目的数据。",
       "busy": "上一个请求仍在处理中，请稍后再试。",
       "room-cap": "打开的负责人终端过多。请先停止一个再打开此终端。"
@@ -1482,7 +1483,10 @@
       "cancel": "取消",
       "openUntrusted": "不信任打开",
       "trust": "信任",
-      "notSaved": "无法保存信任，负责人已以不信任方式打开。Claude 可能会在终端中询问。"
+      "notSaved": "无法保存信任，负责人已以不信任方式打开。Claude 可能会在终端中询问。",
+      "forget": "取消信任",
+      "forgetHint": "下次打开时会再次询问。同时移除 Claude Code 对此文件夹的信任。",
+      "forgotten": "已取消信任。下次打开时会再次询问。"
     },
     "large": {
       "title": "大型会话",

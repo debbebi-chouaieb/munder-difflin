@@ -234,6 +234,24 @@ test('revoke: a missing Claude config is fine; an unreadable one or a failed sav
   assert.equal(await wiring({ home: tempDir(t), patchOk: false }).w.revokeTrust(project, null), false);
 });
 
+test('forget: Claude folder trust first, stored trust only once that worked (ADR 0012)', async (t) => {
+  const project = { id: 'app', path: 'D:/ws/App' };
+  const home = tempDir(t);
+  claudeJsonTrusting(home, 'D:/ws/App');
+  const ok = wiring({ home });
+  assert.equal(await ok.w.forgetTrust(project, null), true);
+  assert.deepEqual(ok.patches, [['app', { trustedPath: null, trustedRoot: null }]]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).projects['D:/ws/App'], {});
+
+  const brokenHome = tempDir(t);
+  fs.writeFileSync(path.join(brokenHome, '.claude.json'), '{ not json');
+  const broken = wiring({ home: brokenHome });
+  assert.equal(await broken.w.forgetTrust(project, null), false);
+  assert.deepEqual(broken.patches, [], 'stored trust kept, so the person can retry');
+
+  assert.equal(await wiring({ home: tempDir(t), patchOk: false }).w.forgetTrust(project, null), false);
+});
+
 test('root commits: read from a real repo, with repo-local fsmonitor and hooks turned off', async (t) => {
   const { rootCommitsOutput } = loadTs('src/main/git.ts');
   const { trustedRootFrom } = loadTs('src/shared/project.ts');
