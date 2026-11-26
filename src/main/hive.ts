@@ -1305,6 +1305,8 @@ export class HiveManager {
         : {}),
       hooks: {
         Stop: [entry()],
+        // Start and stop of each subagent light its row in the sidebar (ADR 0014).
+        SubagentStart: [entry()],
         SubagentStop: [entry()],
         PreToolUse: [entry('*')],
         PostToolUse: [entry('*')],

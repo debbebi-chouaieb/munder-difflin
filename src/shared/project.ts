@@ -1,4 +1,4 @@
-import { agentDefinitionsFrom, agentNameOfFile, type AgentDefinition, type AgentFileHead } from './agentDefinition';
+import { agentDefinitionsFrom, type AgentDefinition, type AgentFileHead } from './agentDefinition';
 
 /**
  * Workspace projects (ADR 0001): each non-hidden, top-level git folder of the
@@ -88,8 +88,8 @@ export interface Project {
 export interface ProjectsSnapshot {
   workspaceRoot: string | null;
   projects: Project[];
-  /** Global agents (`~/.claude/agents/<name>.md`): the tech-leads room. */
-  globalAgents: string[];
+  /** Global agents (`<Claude config>/agents/<name>.md`): the tech-leads room (ADR 0013). */
+  globalAgents: AgentDefinition[];
   /** Set when the workspace root or projects.json could not be read. */
   error?: string;
 }
@@ -183,16 +183,6 @@ export function normalizeZetahubKey(input: unknown): { ok: true; key: string | n
   const key = input.trim().toUpperCase();
   if (key === '') return { ok: true, key: null };
   return isValidZetahubKey(key) ? { ok: true, key } : { ok: false };
-}
-
-/** Agent names from `<name>.md` definition files, sorted, invalid names dropped. */
-export function agentNamesFrom(files: string[]): string[] {
-  const names = new Set<string>();
-  for (const file of files) {
-    const name = agentNameOfFile(file);
-    if (name !== null) names.add(name);
-  }
-  return [...names].sort(byCodePoint);
 }
 
 function byCodePoint(a: string, b: string): number {

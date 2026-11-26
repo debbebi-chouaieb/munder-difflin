@@ -1435,6 +1435,7 @@
     "deskTitle": "وكيل خاص بالمشروع. يبدأ عند الحاجة.",
     "noAgents": "لا يوجد وكلاء معرّفون في ‎.claude/agents‎.",
     "techLeadTitle": "وكيل عام من ‎~/.claude/agents‎. يبدأ عند الحاجة.",
+    "subagentRunning": "يعمل الآن كوكيل فرعي.",
     "keyInvalid": "استخدم أحرفًا كبيرة وأرقامًا مع شرطة واحدة على الأكثر، مثل MDM أو MCX-ANDR.",
     "errors": {
       "pickLocal": "اختر مجلدًا على هذا الحاسوب.",

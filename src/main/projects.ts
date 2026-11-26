@@ -14,9 +14,8 @@ import { lstat, open, readdir, readFile, stat, type FileHandle } from 'node:fs/p
 import { isAbsolute, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mapLimit } from '../shared/mapLimit';
-import { AGENT_HEAD_BYTES, MAX_AGENT_FILES, agentNameOfFile, type AgentFileHead } from '../shared/agentDefinition';
+import { AGENT_HEAD_BYTES, MAX_AGENT_FILES, agentDefinitionsFrom, agentNameOfFile, type AgentFileHead } from '../shared/agentDefinition';
 import {
-  agentNamesFrom,
   emptyProjectsFile,
   isCandidateFolder,
   isValidProjectId,
@@ -45,7 +44,7 @@ export interface ProjectServiceDeps {
   /** `<harnessHome>/hive`, or null before a hive exists. */
   hiveRoot(): string | null;
   commit(message: string): void;
-  /** Folder holding the user's global agents (`~/.claude/agents`). */
+  /** Folder holding the user's global agents; see `globalAgentsDirFor`. */
   globalAgentsDir: string;
   push(snapshot: ProjectsSnapshot): void;
   log(message: string): void;
@@ -59,6 +58,17 @@ type StoredRead = { ok: true; file: ProjectsFile } | { ok: false; error: string 
  */
 export function isLocalAbsolutePath(path: string): boolean {
   return isAbsolute(path) && !/^[\\/]{2}/.test(path);
+}
+
+/**
+ * Where Claude loads user agents from: `$CLAUDE_CONFIG_DIR/agents` when that is a
+ * local absolute path (spawned agents keep it, see ptyEnv), else `~/.claude/agents`
+ * (ADR 0013).
+ */
+export function globalAgentsDirFor(env: NodeJS.ProcessEnv, home: string): string {
+  const configDir = env.CLAUDE_CONFIG_DIR?.trim();
+  if (configDir && isLocalAbsolutePath(configDir)) return join(configDir, 'agents');
+  return join(home, '.claude', 'agents');
 }
 
 export class ProjectService {
@@ -145,7 +155,7 @@ export class ProjectService {
   }
 
   private async scanAndPublish(): Promise<ProjectsSnapshot> {
-    const globalAgents = agentNamesFrom(await listFiles(this.deps.globalAgentsDir));
+    const globalAgents = agentDefinitionsFrom(await agentHeads(this.deps.globalAgentsDir));
     const root = this.deps.workspaceRoot();
     if (!root) return this.publishScan([], { workspaceRoot: null, projects: [], globalAgents });
     if (!isLocalAbsolutePath(root)) {

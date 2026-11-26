@@ -24,6 +24,7 @@ import { acquireTerminal, disposeTerminal, resetTerminal, isTerminalAutomationSa
 import { isLeadAgentId } from '@shared/roomLead';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
 import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/scene/office/cast';
+import { useSubagents } from '@/store/subagents';
 
 const GOD_ID = 'god';
 /** Accent palette for MAIN-spawned (voice-hired) agents — picked deterministically
@@ -479,6 +480,7 @@ export function useHive(config: HarnessConfig | null): void {
   useEffect(() => {
     return window.cth.onHiveHookEvent((e) => {
       if (!e.agentId) return;
+      useSubagents.getState().apply(e);
       const { updateAgent, agents } = useStore.getState();
       const self = agents.find((a) => a.id === e.agentId);
       if (!self) return;

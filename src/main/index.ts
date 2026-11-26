@@ -61,7 +61,7 @@ import {
 } from './triggerHistory';
 import { transcribeWithGroq, DEFAULT_GROQ_MODEL } from './freeflow';
 import { registerRealtimeIpc } from './realtime';
-import { ProjectService, registerProjectsIpc, projectsPusher } from './projects';
+import { ProjectService, globalAgentsDirFor, registerProjectsIpc, projectsPusher } from './projects';
 import { busyTerminalIn, isLocalAbsolute, isNetworkPath, resolveAllowedRoot, ROOT_REFUSED } from './rootGuard';
 import { withoutWorkspaceRoot } from '../shared/project';
 import { registerRealtimeActionIpc } from './realtimeActions';
@@ -4580,7 +4580,7 @@ const projectService = new ProjectService({
   setWorkspaceRoot: (root) => { writeConfig({ workspaceRoot: root }); },
   hiveRoot: () => hive.root(),
   commit: (message) => hive.commit(message),
-  globalAgentsDir: join(homedir(), '.claude', 'agents'),
+  globalAgentsDir: globalAgentsDirFor(process.env, homedir()),
   push: projectsPusher(() => liveWebContents()),
   log: (message) => console.error(message)
 });

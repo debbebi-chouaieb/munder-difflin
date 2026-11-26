@@ -21,6 +21,7 @@ import type { CircuitBreaker } from './breaker';
 import type { SpawnTokenCheck } from './spawnTokens';
 import { estimateCostUsd } from './pricing';
 import { validateHookEvent } from '../shared/hookEvents';
+import { isSubagentId, isSubagentType } from '../shared/subagentActivity';
 
 /** Maximum JSON payload bytes in one newline-delimited hook frame. */
 const MAX_HOOK_FRAME_BYTES = 256 * 1024;
@@ -38,6 +39,10 @@ interface HookPayload {
   tool_name?: string;
   tool_input?: unknown;
   stop_hook_active?: boolean;
+  /** Claude's subagent id, moved here by the shim (ADR 0011). */
+  subagent_id?: string;
+  /** Set by Claude on hooks fired inside a subagent: the definition's `name`. */
+  agent_type?: string;
   prompt?: string;
   source?: string;
   notification_type?: string;
@@ -646,7 +651,11 @@ export class HookServer {
       notificationType: p.notification_type,
       source: p.source,
       message: p.message,
-      blocked
+      blocked,
+      // Claude's values are dropped, not forwarded, when they do not fit (ADR 0014):
+      // a plugin agent's `plugin:name` type would otherwise fail the whole event.
+      ...(isSubagentId(p.subagent_id) ? { subagentId: p.subagent_id } : {}),
+      ...(isSubagentType(p.agent_type) ? { subagentType: p.agent_type } : {})
     };
     if (!validateHookEvent(payload)) {
       console.warn('[hive] rejected invalid hook event:', event);

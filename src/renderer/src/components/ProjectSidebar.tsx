@@ -5,10 +5,12 @@ import { useProjects } from '@/store/projects';
 import { groupAgents, projectErrorKey, workspaceLabel, type SidebarAgent } from '@/store/projectSidebar';
 import { useRtl } from '@/i18n/useDirection';
 import type { ProjectsSnapshot } from '@shared/project';
+import { activeAgentRows, type ActiveRows } from '@shared/subagentActivity';
+import { useSubagents } from '@/store/subagents';
 import { PixelPanel } from '@/components/PixelPanel';
 import { PixelButton } from '@/components/PixelButton';
 import { Icon } from '@/components/Icon';
-import { ProjectRow } from '@/components/ProjectRow';
+import { ProjectRow, runningText } from '@/components/ProjectRow';
 
 /**
  * Left project menu (ADR 0001, Phase 2): the CEO, the tech leads (global
@@ -47,7 +49,13 @@ function ExpandedSidebar({ width, onHide }: { width: number; onHide: () => void 
   const agents = useStore((s) => s.agents);
   const select = useStore((s) => s.select);
 
+  const running = useSubagents((s) => s.running);
+
   const groups = useMemo(() => groupAgents(agents, snapshot.projects), [agents, snapshot.projects]);
+  const active = useMemo(() => {
+    const live = new Set(agents.filter((a) => a.ptyId).map((a) => a.id));
+    return activeAgentRows(running, live, snapshot.projects, snapshot.globalAgents);
+  }, [running, agents, snapshot.projects, snapshot.globalAgents]);
   const root = snapshot.workspaceRoot;
   const rawError = actionError ?? snapshot.error ?? null;
   const errorKey = rawError ? projectErrorKey(rawError) : null;
@@ -110,18 +118,27 @@ function ExpandedSidebar({ width, onHide }: { width: number; onHide: () => void 
             <span style={muted}>{t('projectSidebar.techLeadsEmpty')}</span>
           ) : (
             <ul style={{ margin: 0, padding: 0 }}>
-              {snapshot.globalAgents.map((name) => (
-                <li key={name} style={{ ...muted, listStyle: 'none' }} title={t('projectSidebar.techLeadTitle')}>
-                  <span aria-hidden="true">○ </span>{name}
-                </li>
-              ))}
+              {snapshot.globalAgents.map((agent) => {
+                const isRunning = active.globals.has(agent.file);
+                const about = agent.description ?? t('projectSidebar.techLeadTitle');
+                return (
+                  <li
+                    key={agent.file}
+                    style={{ ...muted, listStyle: 'none', ...(isRunning ? runningText : {}) }}
+                    title={isRunning ? `${t('projectSidebar.subagentRunning')} ${about}` : about}
+                  >
+                    <span aria-hidden="true">{isRunning ? '● ' : '○ '}</span><span dir="auto">{agent.name}</span>
+                    {agent.model && <> · <bdi>{agent.model}</bdi></>}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </Section>
 
         <Section title={t('projectSidebar.projects')}>
           {loaded && (
-            <ProjectList snapshot={snapshot} onFloor={groups.byProject} onPick={() => void pickWorkspace()} onSelectAgent={select} />
+            <ProjectList snapshot={snapshot} onFloor={groups.byProject} active={active} onPick={() => void pickWorkspace()} onSelectAgent={select} />
           )}
         </Section>
       </div>
@@ -129,9 +146,10 @@ function ExpandedSidebar({ width, onHide }: { width: number; onHide: () => void 
   );
 }
 
-function ProjectList({ snapshot, onFloor, onPick, onSelectAgent }: {
+function ProjectList({ snapshot, onFloor, active, onPick, onSelectAgent }: {
   snapshot: ProjectsSnapshot;
   onFloor: Record<string, SidebarAgent[]>;
+  active: ActiveRows;
   onPick: () => void;
   onSelectAgent: (id: string) => void;
 }) {
@@ -157,6 +175,7 @@ function ProjectList({ snapshot, onFloor, onPick, onSelectAgent }: {
           key={project.id}
           project={project}
           onFloor={onFloor[project.id] ?? []}
+          runningDesks={active.desks[project.id] ?? NO_DESKS}
           onToggleEnabled={(enabled) => void setEnabled(project.id, enabled)}
           onToggleParallel={(parallel) => void setParallel(project.id, parallel)}
           onSaveKey={(key) => void setZetahubKey(project.id, key)}
@@ -179,6 +198,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 const muted: CSSProperties = { fontSize: 12, color: 'var(--cth-ink-500)' };
+const NO_DESKS: ReadonlySet<string> = new Set();
 
 const rowButton: CSSProperties = {
   background: 'transparent',

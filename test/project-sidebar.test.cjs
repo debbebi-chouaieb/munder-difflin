@@ -215,7 +215,7 @@ function loadStore(cth, storage = {}) {
   return require('./load-ts.cjs')('src/renderer/src/store/projects.ts').useProjects;
 }
 
-const okSnapshot = { workspaceRoot: 'D:\\zetabox', projects: [], globalAgents: ['reviewer'] };
+const okSnapshot = { workspaceRoot: 'D:\\zetabox', projects: [], globalAgents: [{ file: 'reviewer', name: 'reviewer', model: null, description: null }] };
 
 test('the store restores width and hidden state, and clamps a bad width', (t) => {
   t.after(() => { delete global.window; });

@@ -1435,6 +1435,7 @@
     "deskTitle": "Agent from the project. Started when needed.",
     "noAgents": "No agents defined in .claude/agents.",
     "techLeadTitle": "Global agent from ~/.claude/agents. Started when needed.",
+    "subagentRunning": "Running now as a subagent.",
     "keyInvalid": "Use capitals and digits, with at most one dash, like MDM or MCX-ANDR.",
     "errors": {
       "pickLocal": "Pick a folder on this computer.",

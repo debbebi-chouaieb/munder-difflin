@@ -1435,6 +1435,7 @@
     "deskTitle": "项目自带的代理，需要时启动。",
     "noAgents": ".claude/agents 中没有定义代理。",
     "techLeadTitle": "来自 ~/.claude/agents 的全局代理，需要时启动。",
+    "subagentRunning": "正在作为子代理运行。",
     "keyInvalid": "请使用大写字母和数字，最多一个连字符，例如 MDM 或 MCX-ANDR。",
     "errors": {
       "pickLocal": "请选择本机上的文件夹。",

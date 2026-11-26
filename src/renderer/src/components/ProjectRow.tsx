@@ -8,6 +8,8 @@ export interface ProjectRowProps {
   project: Project;
   /** Agents on the floor whose working folder is in this project. */
   onFloor: SidebarAgent[];
+  /** `file` keys of this project's desks running as a subagent now (ADR 0014). */
+  runningDesks: ReadonlySet<string>;
   onToggleEnabled: (enabled: boolean) => void;
   onToggleParallel: (parallel: boolean) => void;
   onSaveKey: (key: string | null) => void;
@@ -15,9 +17,11 @@ export interface ProjectRowProps {
 }
 
 const smallText: CSSProperties = { fontSize: 11, lineHeight: '16px', color: 'var(--cth-ink-500)' };
+/** An agent definition that a live session is running as a subagent right now. */
+export const runningText: CSSProperties = { color: 'var(--cth-ink-900)' };
 
 /** One project: on/off checkbox, key badge, parallel switch, and its agents when expanded. */
-export function ProjectRow({ project, onFloor, onToggleEnabled, onToggleParallel, onSaveKey, onSelectAgent }: ProjectRowProps) {
+export function ProjectRow({ project, onFloor, runningDesks, onToggleEnabled, onToggleParallel, onSaveKey, onSelectAgent }: ProjectRowProps) {
   const { t } = useTranslation();
   const rtl = useRtl();
   const textDir = rtl ? 'auto' : undefined;
@@ -81,12 +85,20 @@ export function ProjectRow({ project, onFloor, onToggleEnabled, onToggleParallel
             {project.agents.length === 0 ? (
               <li style={{ ...smallText, listStyle: 'none' }}>{t('projectSidebar.noAgents')}</li>
             ) : (
-              project.agents.map((agent) => (
-                <li key={agent.file} style={{ ...smallText, listStyle: 'none' }} title={agent.description ?? t('projectSidebar.deskTitle')}>
-                  <span aria-hidden="true">○ </span><span dir="auto">{agent.name}</span>
-                  {agent.model && <> · <bdi>{agent.model}</bdi></>}
-                </li>
-              ))
+              project.agents.map((agent) => {
+                const isRunning = runningDesks.has(agent.file);
+                const about = agent.description ?? t('projectSidebar.deskTitle');
+                return (
+                  <li
+                    key={agent.file}
+                    style={{ ...smallText, listStyle: 'none', ...(isRunning ? runningText : {}) }}
+                    title={isRunning ? `${t('projectSidebar.subagentRunning')} ${about}` : about}
+                  >
+                    <span aria-hidden="true">{isRunning ? '● ' : '○ '}</span><span dir="auto">{agent.name}</span>
+                    {agent.model && <> · <bdi>{agent.model}</bdi></>}
+                  </li>
+                );
+              })
             )}
           </AgentList>
         </div>

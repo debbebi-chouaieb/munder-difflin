@@ -11,7 +11,7 @@ const path = require('node:path');
 const loadTs = require('./load-ts.cjs');
 
 const shared = loadTs('src/shared/project.ts');
-const { ProjectService, readWorkspace, isLocalAbsolutePath } = loadTs('src/main/projects.ts');
+const { ProjectService, readWorkspace, isLocalAbsolutePath, globalAgentsDirFor } = loadTs('src/main/projects.ts');
 
 function folder(name, over = {}) {
   return {
@@ -61,11 +61,14 @@ test('user key input is trimmed, upper-cased, capped, and empty clears it', () =
   assert.deepEqual(shared.normalizeZetahubKey(42), { ok: false });
 });
 
-test('agent names come from .md files only, invalid names dropped', () => {
-  assert.deepEqual(
-    shared.agentNamesFrom(['go-dev.md', 'README.txt', 'mdm-protocol-expert.md', '../evil.md', 'a b.md']),
-    ['go-dev', 'mdm-protocol-expert']
-  );
+test('global agents come from CLAUDE_CONFIG_DIR when it is a local absolute path (ADR 0013)', () => {
+  const home = path.resolve('/home/me');
+  const config = path.resolve('/cfg/claude');
+  assert.equal(globalAgentsDirFor({}, home), path.join(home, '.claude', 'agents'));
+  assert.equal(globalAgentsDirFor({ CLAUDE_CONFIG_DIR: config }, home), path.join(config, 'agents'));
+  assert.equal(globalAgentsDirFor({ CLAUDE_CONFIG_DIR: 'relative/dir' }, home), path.join(home, '.claude', 'agents'));
+  assert.equal(globalAgentsDirFor({ CLAUDE_CONFIG_DIR: '\\\\server\\share' }, home), path.join(home, '.claude', 'agents'));
+  assert.equal(globalAgentsDirFor({ CLAUDE_CONFIG_DIR: '  ' }, home), path.join(home, '.claude', 'agents'));
 });
 
 test('new projects start disabled and serial; stored state wins', () => {
@@ -171,7 +174,8 @@ function makeWorkspace(t) {
   fs.mkdirSync(hive, { recursive: true });
   const globals = path.join(dir, 'agents');
   fs.mkdirSync(globals);
-  fs.writeFileSync(path.join(globals, 'reviewer.md'), '');
+  fs.writeFileSync(path.join(globals, 'reviewer.md'), '---\nname: reviewer\nmodel: sonnet\ndescription: Reviews code.\n---\n');
+  fs.writeFileSync(path.join(globals, 'notes.txt'), 'not an agent');
   return { dir, ws, hive, globals, outside };
 }
 
@@ -243,7 +247,7 @@ test('the service is empty until a workspace is picked, then persists toggles', 
   const empty = await svc.rescan();
   assert.equal(empty.workspaceRoot, null);
   assert.deepEqual(empty.projects, []);
-  assert.deepEqual(empty.globalAgents, ['reviewer']);
+  assert.deepEqual(empty.globalAgents, [{ file: 'reviewer', name: 'reviewer', model: 'sonnet', description: 'Reviews code.' }]);
 
   assert.equal((await svc.setWorkspaceRoot('relative/path')).ok, false);
   assert.equal((await svc.setWorkspaceRoot('\\\\attacker\\share')).ok, false);
