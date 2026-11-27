@@ -106,10 +106,13 @@ test('selecting an agent closes the room', () => {
 });
 
 test('"Forget trust" is offered only for a trusted project with no lead running', () => {
-  assert.equal(model.canForgetTrust(true, false), true);
-  assert.equal(model.canForgetTrust(true, true), false, 'the person stops the lead first');
-  assert.equal(model.canForgetTrust(false, false), false);
-  assert.equal(model.canForgetTrust(false, true), false);
+  assert.equal(model.canForgetTrust(true, false, false), true);
+  assert.equal(model.canForgetTrust(true, false, true), false, 'the person stops the lead first');
+  assert.equal(model.canForgetTrust(false, false, false), false);
+  assert.equal(model.canForgetTrust(false, false, true), false);
+  // ADR 0018: Claude folder trust left by a revoke can be retried from the button.
+  assert.equal(model.canForgetTrust(false, true, false), true);
+  assert.equal(model.canForgetTrust(false, true, true), false);
 });
 
 // ── strings ──────────────────────────────────────────────────────────────────

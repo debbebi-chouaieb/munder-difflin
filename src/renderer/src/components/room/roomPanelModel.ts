@@ -9,9 +9,12 @@ export function roomErrorKey(code: RoomErrorCode): string {
   return `room.errors.${code}`;
 }
 
-/** "Forget trust" is offered for a trusted project whose lead is not running (ADR 0012). */
-export function canForgetTrust(trusted: boolean, leadRunning: boolean): boolean {
-  return trusted && !leadRunning;
+/**
+ * "Forget trust" is offered for a trusted project whose lead is not running (ADR 0012), and
+ * while Claude folder trust from a revoke is still to drop, so the person can retry (ADR 0018).
+ */
+export function canForgetTrust(trusted: boolean, claudeTrustPending: boolean, leadRunning: boolean): boolean {
+  return (trusted || claudeTrustPending) && !leadRunning;
 }
 
 /**

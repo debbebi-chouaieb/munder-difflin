@@ -452,6 +452,23 @@ test('trust root: only commit ids are stored; patch sets and removes it', () => 
   assert.equal(shared.patchStoredProject(on, 'app', { trustedRoot: 'junk' }).projects.app.trustedRoot, `${sha1},${sha256}`);
 });
 
+test('Claude trust to drop: one or two folder paths are kept, anything else is dropped; patch sets and clears (ADR 0018)', () => {
+  const read = (v) => shared.parseProjectsFile({ version: 1, projects: { app: { enabled: true, parallel: false, claudeTrustToDrop: v } } }).projects.app;
+  assert.deepEqual(read(['D:/ws/App']).claudeTrustToDrop, ['D:/ws/App']);
+  assert.deepEqual(read(['D:/ws/App', 'D:/real/App']).claudeTrustToDrop, ['D:/ws/App', 'D:/real/App']);
+  for (const bad of [[], ['a', 'b', 'c'], [''], ['x'.repeat(1025)], [42], 'D:/ws/App', null, { 0: 'D:/ws/App' }]) {
+    assert.equal('claudeTrustToDrop' in read(bad), false, JSON.stringify(bad));
+  }
+  const [none] = shared.mergeProjects([folder('App', { path: 'D:/ws/App' })], shared.parseProjectsFile({ version: 1, projects: {} }));
+  assert.deepEqual(none.claudeTrustToDrop, []);
+  const [pending] = shared.mergeProjects([folder('App', { path: 'D:/ws/App' })], { version: 1, projects: { app: read(['D:/ws/App']) } });
+  assert.deepEqual(pending.claudeTrustToDrop, ['D:/ws/App']);
+  const on = shared.patchStoredProject({ version: 1, projects: {} }, 'app', { claudeTrustToDrop: ['D:/ws/App'] });
+  assert.deepEqual(on.projects.app.claudeTrustToDrop, ['D:/ws/App']);
+  assert.equal('claudeTrustToDrop' in shared.patchStoredProject(on, 'app', { claudeTrustToDrop: null }).projects.app, false);
+  assert.deepEqual(shared.patchStoredProject(on, 'app', { claudeTrustToDrop: [] }).projects.app.claudeTrustToDrop, ['D:/ws/App']);
+});
+
 test('trust root: rev-list output is sorted, de-duplicated, and empty or junk gives null', () => {
   const a = 'a'.repeat(40);
   const c = 'c'.repeat(40);

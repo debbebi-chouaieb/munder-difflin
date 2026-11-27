@@ -237,7 +237,7 @@ export function RoomPanel({ projectId }: { projectId: string }) {
             {topHeight > 0 ? t('room.lists.hide') : t('room.lists.show')}
           </PixelButton>
         )}
-        {canForgetTrust(project.trusted, leadRunning) && (
+        {canForgetTrust(project.trusted, project.claudeTrustToDrop.length > 0, leadRunning) && (
           <PixelButton size="sm" variant="ghost" disabled={busy} onClick={() => void forgetTrust()} title={t('room.trust.forgetHint')}>
             {t('room.trust.forget')}
           </PixelButton>

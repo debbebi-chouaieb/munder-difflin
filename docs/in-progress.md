@@ -7,7 +7,6 @@ Update this file whenever a work item starts, finishes, or a new gap appears.
 munder-difflin has no ZetaHub project, so its work is tracked here as local tickets. The `backlog` skill reads
 only this section. One bullet per item: what, then (source, date). Remove a bullet when it is done.
 
-- Rooms orphaned Claude trust: when main's own revokeTrust (stale repo, failed spawn) drops stored trust but cannot write `~/.claude.json`, the app-written folder trust stays and no button can clear it (project reads untrusted). Retry on the next open or forget (from Forget trust audit, 2026-11-26)
 - Rooms tests: no behaviour test drives the Forget trust button in RoomPanel; only `canForgetTrust` is tested (from Forget trust review, 2026-11-26)
 - Rooms small: the room panel and the board-count hook both read tickets on window focus (one extra read); the `hive:agentSpawned` payload is built in roomWiring.announceLead and three spawn-then-announce copies in index.ts: one builder in shared/roomLead.ts (Rooms-e review, 2026-11-23)
 - Rooms limits UI: `roomPtyCap` and `roomIdleMinutes` are config-file only; add them to Settings if people need to change them. The cap counts least recently used by last room open or write, both reset on app restart (Rooms-d, 2026-11-23)

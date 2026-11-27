@@ -212,8 +212,12 @@ test('revoke: drops stored trust and Claude folder trust for both folder spellin
     }
   }));
   const { w, patches } = wiring({ home });
-  assert.equal(await w.revokeTrust({ id: 'app', path: WIN_APP }, 'D:/real/App'), true);
-  assert.deepEqual(patches, [['app', { trustedPath: null, trustedRoot: null }]]);
+  assert.deepEqual(await w.revokeTrust({ id: 'app', path: WIN_APP }, 'D:/real/App'), { stored: true, claude: true });
+  // ADR 0018: the folders are recorded with the drop and cleared once Claude's config is written.
+  assert.deepEqual(patches, [
+    ['app', { trustedPath: null, trustedRoot: null, claudeTrustToDrop: [WIN_APP, 'D:/real/App'] }],
+    ['app', { claudeTrustToDrop: null }]
+  ]);
   const after = JSON.parse(fs.readFileSync(file, 'utf8'));
   assert.equal(after.numStartups, 3);
   assert.deepEqual(after.projects['D:/ws/App'], { allowedTools: ['x'] });
@@ -224,14 +228,18 @@ test('revoke: drops stored trust and Claude folder trust for both folder spellin
 
 test('revoke: a missing Claude config is fine; an unreadable one or a failed save reports false', async (t) => {
   const project = { id: 'app', path: 'D:/ws/App' };
-  assert.equal(await wiring({ home: tempDir(t) }).w.revokeTrust(project, null), true);
+  assert.deepEqual(await wiring({ home: tempDir(t) }).w.revokeTrust(project, null), { stored: true, claude: true });
   const home = tempDir(t);
   fs.writeFileSync(path.join(home, '.claude.json'), '{ not json');
   const broken = wiring({ home });
-  assert.equal(await broken.w.revokeTrust(project, null), false);
-  assert.equal(broken.patches.length, 1, 'stored trust is dropped even when Claude config is not');
+  assert.deepEqual(await broken.w.revokeTrust(project, null), { stored: true, claude: false });
+  assert.deepEqual(broken.patches, [['app', { trustedPath: null, trustedRoot: null, claudeTrustToDrop: ['D:/ws/App'] }]],
+    'stored trust is dropped even when Claude config is not, and the Claude part stays recorded');
   assert.equal(broken.log.length, 1);
-  assert.equal(await wiring({ home: tempDir(t), patchOk: false }).w.revokeTrust(project, null), false);
+  // A failed save keeps stored trust and records nothing; Claude's part is still dropped and nothing is cleared.
+  const unsaved = wiring({ home: tempDir(t), patchOk: false });
+  assert.deepEqual(await unsaved.w.revokeTrust(project, null), { stored: false, claude: true });
+  assert.equal(unsaved.patches.length, 1);
 });
 
 test('forget: Claude folder trust first, stored trust only once that worked (ADR 0012)', async (t) => {
@@ -252,6 +260,35 @@ test('forget: Claude folder trust first, stored trust only once that worked (ADR
   assert.equal(await wiring({ home: tempDir(t), patchOk: false }).w.forgetTrust(project, null), false);
 });
 
+test('retry Claude trust drop: nothing pending is a no-op; a pending folder is dropped and the record cleared (ADR 0018)', async (t) => {
+  const idle = wiring({ home: tempDir(t) });
+  assert.equal(await idle.w.retryClaudeTrustDrop({ id: 'app', path: 'D:/ws/App', claudeTrustToDrop: [] }), true);
+  assert.deepEqual(idle.patches, []);
+
+  const home = tempDir(t);
+  claudeJsonTrusting(home, 'D:/real/App');
+  const pending = wiring({ home });
+  assert.equal(await pending.w.retryClaudeTrustDrop({ id: 'app', path: 'D:/ws/App', claudeTrustToDrop: ['D:/real/App'] }), true);
+  assert.deepEqual(pending.patches, [['app', { claudeTrustToDrop: null }]]);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, '.claude.json'), 'utf8')).projects['D:/real/App'], {});
+});
+
+test('retry Claude trust drop: a record that cannot be cleared still reports the trust gone, and logs it', async (t) => {
+  const home = tempDir(t);
+  claudeJsonTrusting(home, 'D:/ws/App');
+  const stuck = wiring({ home, patchOk: false });
+  assert.equal(await stuck.w.retryClaudeTrustDrop({ id: 'app', path: 'D:/ws/App', claudeTrustToDrop: ['D:/ws/App'] }), true);
+  assert.ok(stuck.log.some((l) => l.includes('could not clear the pending Claude trust drop')));
+});
+
+test('retry Claude trust drop: a config that still cannot be written keeps the record and reports false', async (t) => {
+  const home = tempDir(t);
+  fs.writeFileSync(path.join(home, '.claude.json'), '{ not json');
+  const broken = wiring({ home });
+  assert.equal(await broken.w.retryClaudeTrustDrop({ id: 'app', path: 'D:/ws/App', claudeTrustToDrop: ['D:/ws/App'] }), false);
+  assert.deepEqual(broken.patches, []);
+});
+
 test('root commits: read from a real repo, with repo-local fsmonitor and hooks turned off', async (t) => {
   const { rootCommitsOutput } = loadTs('src/main/git.ts');
   const { trustedRootFrom } = loadTs('src/shared/project.ts');
@@ -270,7 +307,7 @@ test('revoke: a key in another letter case is dropped on Windows, and no temp fi
   const home = tempDir(t);
   const file = path.join(home, '.claude.json');
   fs.writeFileSync(file, JSON.stringify({ projects: { 'd:/WS/app/': { hasTrustDialogAccepted: true } } }));
-  assert.equal(await wiring({ home }).w.revokeTrust({ id: 'app', path: 'D:/ws/App' }, null), true);
+  assert.deepEqual(await wiring({ home }).w.revokeTrust({ id: 'app', path: 'D:/ws/App' }, null), { stored: true, claude: true });
   assert.deepEqual(JSON.parse(fs.readFileSync(file, 'utf8')).projects['d:/WS/app/'], {});
   assert.deepEqual(fs.readdirSync(home), ['.claude.json']);
 });

@@ -26,6 +26,7 @@ export const ROOM_ERROR_CODES = [
   'spawn-failed',
   'stop-failed',
   'forget-failed',
+  'trust-cleanup-failed',
   'read-failed',
   'busy',
   'room-cap'

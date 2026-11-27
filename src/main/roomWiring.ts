@@ -32,6 +32,12 @@ export interface RoomWiringDeps {
  */
 export type TrustState = 'trusted' | 'stale' | 'unknown' | 'none';
 
+/** Which parts of a revoke were saved: the stored trust, and Claude's folder trust in ~/.claude.json. */
+export interface TrustRevoke {
+  stored: boolean;
+  claude: boolean;
+}
+
 export interface RoomWiring {
   /** Parsed ~/.claude.json, or null when it is missing, too big or unreadable (then Claude will ask). */
   readClaudeConfig: () => Promise<unknown>;
@@ -56,15 +62,20 @@ export interface RoomWiring {
   trustState: (project: Project, cwd: string) => Promise<TrustState>;
   /**
    * Drops the project's trust and Claude's own folder trust for its folder, so
-   * the next lead asks again. False when any part could not be saved.
+   * the next lead asks again. Says which part was saved (ADR 0018).
    */
-  revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  revokeTrust: (project: Project, cwd: string | null) => Promise<TrustRevoke>;
   /**
    * The person's "Forget trust" (ADR 0012): drops Claude's folder trust first and
    * the stored trust only once that worked, so a failure leaves the project
    * trusted and the person can retry. False when any part could not be saved.
    */
   forgetTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  /**
+   * Drops the Claude folder trust a revoke could not (ADR 0018) and clears the
+   * record. True when nothing is pending any more.
+   */
+  retryClaudeTrustDrop: (project: Project) => Promise<boolean>;
   /** Notes that the person used this lead's terminal now; the room cap stops the least recently used. */
   touchLead: (agentId: string) => void;
   /** Epoch ms of the last use, or 0 when never seen since the app started. */
@@ -177,11 +188,23 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
   };
 
   /** Pre-accept wrote the folder the lead ran in, the resolved one; the stored spelling goes too. */
-  const forgetClaudeTrustOf = async (project: Project, cwd: string | null): Promise<boolean> => {
-    const folders = cwd && !samePath(cwd, project.path) ? [project.path, cwd] : [project.path];
+  const claudeTrustFolders = (project: Project, cwd: string | null): string[] =>
+    cwd && !samePath(cwd, project.path) ? [project.path, cwd] : [project.path];
+
+  const forgetClaudeFolders = async (folders: string[]): Promise<boolean> => {
     let forgot = true;
     for (const folder of folders) forgot = (await forgetClaudeFolderTrust(folder)) && forgot;
     return forgot;
+  };
+
+  const forgetClaudeTrustOf = (project: Project, cwd: string | null): Promise<boolean> =>
+    forgetClaudeFolders(claudeTrustFolders(project, cwd));
+
+  /** Once Claude's trust is gone, nothing is left to retry; a failed save only means one harmless retry. */
+  const clearClaudeTrustToDrop = (project: Project): void => {
+    if (!deps.patchProject(project.id, { claudeTrustToDrop: null })) {
+      deps.log(`[room] could not clear the pending Claude trust drop of ${project.id}`);
+    }
   };
 
   const dropStoredTrust = (project: Project): boolean => {
@@ -235,10 +258,24 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
       return trustedRootFrom(out) === project.trustedRoot ? 'trusted' : 'stale';
     },
 
-    // Main's own revokes (stale repo, failed spawn) drop stored trust first: it must go even when Claude's config cannot.
+    // Main's own revokes (stale repo, failed spawn) drop stored trust first: it must go even when Claude's
+    // config cannot. The same save records Claude's part, so a failure there is retried (ADR 0018).
+    // The list replaces the stored one: both callers run inside a room open, which retried a pending drop first.
     async revokeTrust(project, cwd) {
-      const saved = dropStoredTrust(project);
-      return (await forgetClaudeTrustOf(project, cwd)) && saved;
+      const folders = claudeTrustFolders(project, cwd);
+      const stored = deps.patchProject(project.id, { trustedPath: null, trustedRoot: null, claudeTrustToDrop: folders });
+      if (!stored) deps.log(`[room] could not drop trust for ${project.id}`);
+      const claude = await forgetClaudeFolders(folders);
+      if (claude && stored) clearClaudeTrustToDrop(project);
+      return { stored, claude };
+    },
+
+    async retryClaudeTrustDrop(project) {
+      if (project.claudeTrustToDrop.length === 0) return true;
+      if (!(await forgetClaudeFolders(project.claudeTrustToDrop))) return false;
+      clearClaudeTrustToDrop(project);
+      deps.log(`[room] pending Claude folder trust of ${project.id} dropped`);
+      return true;
     },
 
     async forgetTrust(project, cwd) {

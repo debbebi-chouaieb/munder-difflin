@@ -1470,6 +1470,7 @@
       "spawn-failed": "The lead terminal could not start.",
       "stop-failed": "The lead terminal could not be stopped.",
       "forget-failed": "Trust could not be fully forgotten. Try again.",
+      "trust-cleanup-failed": "Claude still trusts this folder from an earlier trust that was dropped, and that could not be removed. Close other apps using ~/.claude.json, then try again or use Forget trust.",
       "read-failed": "Could not read this project's data.",
       "busy": "Still working on the last request. Try again in a moment.",
       "room-cap": "Too many lead terminals are open. Stop one to open this one."

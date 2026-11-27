@@ -4677,6 +4677,7 @@ const roomHandlers = createRoomHandlers({
   trustState: roomWiring.trustState,
   revokeTrust: roomWiring.revokeTrust,
   forgetTrust: roomWiring.forgetTrust,
+  retryClaudeTrustDrop: roomWiring.retryClaudeTrustDrop,
   repoRoot: roomWiring.repoRoot,
   killLead: (agentId) => {
     const res = ptyManager.kill(agentId);

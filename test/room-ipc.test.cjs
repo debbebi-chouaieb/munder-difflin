@@ -21,11 +21,11 @@ const NULLSIZE = '00000000-0000-4000-8000-0000000000aa';
 const ROOT = '1111111111111111111111111111111111111111';
 const PROJECT = {
   id: 'app', name: 'App', path: 'D:/ws/App', leadAgentId: null, enabled: true, trusted: true,
-  zetahubKey: null, localWorkPath: null
+  zetahubKey: null, localWorkPath: null, claudeTrustToDrop: []
 };
 
 function deps(over = {}) {
-  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [], forget: [], touch: [] };
+  const calls = { spawn: [], patch: [], kill: [], archive: [], announce: [], log: [], revoke: [], forget: [], touch: [], retry: [] };
   const running = new Set(over.running ?? []);
   const sessions = {
     [ABC]: { id: ABC, large: false, contextTokens: 10 },
@@ -43,7 +43,8 @@ function deps(over = {}) {
     announceLead: (...args) => calls.announce.push(args),
     patchProject: (id, patch) => { calls.patch.push([id, patch]); return over.patchOk ?? true; },
     trustState: async (p) => over.trustState ?? (p.trusted ? 'trusted' : 'none'),
-    revokeTrust: async (p, cwd) => { calls.revoke.push([p.id, cwd]); return true; },
+    revokeTrust: async (p, cwd) => { calls.revoke.push([p.id, cwd]); return over.revoke ?? { stored: true, claude: true }; },
+    retryClaudeTrustDrop: async (p) => { calls.retry.push([p.id, [...p.claudeTrustToDrop]]); return over.retryOk ?? true; },
     forgetTrust: async (p, cwd) => { calls.forget.push([p.id, cwd]); return over.forgetOk ?? true; },
     repoRoot: async () => ('repoRoot' in over ? over.repoRoot : ROOT),
     killLead: (id) => { calls.kill.push(id); if (over.killFails) return { ok: false, error: 'EPERM' }; running.delete(id); return { ok: true }; },
@@ -322,6 +323,74 @@ test('trust: another repo in the trusted folder drops trust, Claude folder trust
   assert.deepEqual(res, { ok: false, error: 'needs-trust', path: 'D:/ws/App', claudeTrusts: false });
   assert.deepEqual(calls.revoke, [['app', 'D:/ws/App-real']]);
   assert.equal(calls.spawn.length, 0);
+});
+
+// ADR 0018: Claude folder trust a revoke could not drop blocks the open until it is gone.
+test('trust: a stale repo whose Claude trust cannot be dropped does not open', async () => {
+  const { d, calls } = deps({ trustState: 'stale', revoke: { stored: true, claude: false } });
+  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', null, null), { ok: false, error: 'trust-cleanup-failed' });
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('trust: a stale repo whose stored trust could not be saved, but Claude trust dropped, still asks', async () => {
+  const { d, calls } = deps({ trustState: 'stale', revoke: { stored: false, claude: true } });
+  const res = await createRoomHandlers(d).openTerminal('app', null, null);
+  assert.equal(res.error, 'needs-trust');
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('open: the retry runs under the open hold of the lead lock', async () => {
+  const { d } = deps({ project: { claudeTrustToDrop: ['D:/ws/App'] } });
+  let heldBy;
+  d.retryClaudeTrustDrop = async () => { heldBy = d.leadLock.holder('lead--app'); return true; };
+  assert.equal((await createRoomHandlers(d).openTerminal('app', null, null)).ok, true);
+  assert.equal(heldBy, 'open');
+});
+
+test('open: a pending drop that succeeds on retry lets a trusted project spawn', async () => {
+  const { d, calls } = deps({ project: { claudeTrustToDrop: ['D:/ws/App'] } });
+  assert.equal((await createRoomHandlers(d).openTerminal('app', null, null)).ok, true);
+  assert.equal(calls.retry.length, 1);
+  assert.equal(calls.spawn.length, 1);
+});
+
+test('open: the project is read again under the lock, so a drop recorded meanwhile is retried', async () => {
+  const { d, calls } = deps({ retryOk: false });
+  let reads = 0;
+  // The first read is the request's; by the time the lock is held another open recorded a pending drop.
+  d.projects = async () => [{ ...PROJECT, claudeTrustToDrop: reads++ === 0 ? [] : ['D:/ws/App'] }];
+  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', null, null), { ok: false, error: 'trust-cleanup-failed' });
+  assert.deepEqual(calls.retry, [['app', ['D:/ws/App']]]);
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('open: pending Claude trust is retried first; a failed retry starts nothing', async () => {
+  const { d, calls } = deps({ project: { trusted: false, claudeTrustToDrop: ['D:/ws/App'] }, retryOk: false });
+  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', { trust: 'yes', trustPath: 'D:/ws/App' }, null), { ok: false, error: 'trust-cleanup-failed' });
+  assert.deepEqual(calls.retry, [['app', ['D:/ws/App']]]);
+  assert.equal(calls.spawn.length, 0);
+  assert.deepEqual(calls.patch, [], 'the "yes" is not stored');
+});
+
+test('open: a pending Claude trust that drops on retry lets the open go on', async () => {
+  const { d, calls } = deps({ project: { trusted: false, claudeTrustToDrop: ['D:/ws/App'] } });
+  const res = await createRoomHandlers(d).openTerminal('app', null, null);
+  assert.equal(res.error, 'needs-trust');
+  assert.equal(calls.retry.length, 1);
+});
+
+test('forget trust: an untrusted project with pending Claude trust retries the drop only', async () => {
+  const { d, calls } = deps({ project: { trusted: false, claudeTrustToDrop: ['D:/ws/App'] } });
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: true, done: true });
+  assert.deepEqual(calls.retry, [['app', ['D:/ws/App']]]);
+  assert.deepEqual(calls.forget, []);
+  assert.equal(d.leadLock.holder('lead--app'), null);
+});
+
+test('forget trust: a failed retry of pending Claude trust is forget-failed and keeps stored trust', async () => {
+  const { d, calls } = deps({ project: { claudeTrustToDrop: ['D:/ws/App'] }, retryOk: false });
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: false, error: 'forget-failed' });
+  assert.deepEqual(calls.forget, []);
 });
 
 test('trust: a "yes" for a repo without a commit opens untrusted and stores nothing', async () => {

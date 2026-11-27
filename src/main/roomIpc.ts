@@ -17,6 +17,7 @@ import {
 import type { SessionSummary } from '../shared/sessionList';
 import type { RoomTickets } from '../shared/ticketSources';
 import type { LeadLock } from './leadLock';
+import type { TrustRevoke } from './roomWiring';
 
 export interface RoomDeps {
   projects: () => Promise<Project[]>;
@@ -39,9 +40,11 @@ export interface RoomDeps {
   /** Whether stored trust still holds for the repo now in `cwd` (ADR 0007). */
   trustState: (project: Project, cwd: string) => Promise<'trusted' | 'stale' | 'unknown' | 'none'>;
   /** Drops the project's trust and Claude's folder trust; false when a part was not saved. */
-  revokeTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  revokeTrust: (project: Project, cwd: string | null) => Promise<TrustRevoke>;
   /** The person's "Forget trust": stored trust is dropped only after Claude's (ADR 0012). */
   forgetTrust: (project: Project, cwd: string | null) => Promise<boolean>;
+  /** Drops Claude folder trust an earlier revoke could not (ADR 0018); true when none is pending. */
+  retryClaudeTrustDrop: (project: Project) => Promise<boolean>;
   /** The stored form of the repo's root commits in `cwd`, or null (no git, no commit). */
   repoRoot: (cwd: string) => Promise<string | null>;
   killLead: (agentId: string) => { ok: boolean; error?: string };
@@ -84,18 +87,30 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     return project && (!enabledOnly || project.enabled) ? project : null;
   };
 
-  const open = async (project: Project, request: OpenRequest, sender: WebContents | null): Promise<OpenTerminalResult> => {
+  const open = async (seen: Project, request: OpenRequest, sender: WebContents | null): Promise<OpenTerminalResult> => {
+    // Read again under the lock: an open that ran meanwhile may have revoked trust and left a drop pending (ADR 0018).
+    const project = await findProject(seen.id, true);
+    if (!project) return { ok: false, error: 'unknown-project' };
     const agentId = leadAgentIdFor(project);
     const cwd = await deps.resolveProjectCwd(project.path);
     if (!cwd) return { ok: false, error: 'project-moved' };
     const full = await capReached(project);
     if (full) return full;
+    // Claude still trusts a folder main revoked: a lead now would start the repo's hooks
+    // and MCP servers without Claude's prompt, so nothing opens until that is gone (ADR 0018).
+    if (!(await deps.retryClaudeTrustDrop(project))) {
+      deps.log(`[room] Claude folder trust of ${project.id} still to drop; not opening`);
+      return { ok: false, error: 'trust-cleanup-failed' };
+    }
     // Stored trust holds only for the repo it was given to (ADR 0007). Another repo
     // in the folder drops it, Claude's own folder trust included, and asks again.
     const state = await deps.trustState(project, cwd);
     if (state === 'stale') {
       deps.log(`[room] ${project.id} holds another repo than the one trusted; trust dropped`);
-      if (!(await deps.revokeTrust(project, cwd))) deps.log(`[room] trust for ${project.id} not fully dropped`);
+      const revoked = await deps.revokeTrust(project, cwd);
+      if (!revoked.claude) return { ok: false, error: 'trust-cleanup-failed' };
+      // Claude's part is gone, so the stale stored trust is never used; the next open drops it again.
+      if (!revoked.stored) deps.log(`[room] stored trust for ${project.id} not dropped; asking anyway`);
     }
     // Git could not be asked: keep the stored trust, but do not use it for this open.
     if (state === 'unknown') deps.log(`[room] could not read the root commit of ${project.id}; asking again, trust kept`);
@@ -125,8 +140,9 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       deps.log(`[room] lead spawn failed for ${project.id}: ${res.error ?? 'no detail'}`);
       // A "yes" to an open that never ran is not kept: the next open asks again.
       // The spawn may already have pre-accepted Claude's folder trust, so drop that too.
-      if (grantedNow && trusted && !(await deps.revokeTrust(project, cwd))) {
-        deps.log(`[room] could not undo trust for ${project.id} after a failed spawn`);
+      if (grantedNow && trusted) {
+        const revoked = await deps.revokeTrust(project, cwd);
+        if (!revoked.stored || !revoked.claude) deps.log(`[room] could not fully undo trust for ${project.id} after a failed spawn`);
       }
       return { ok: false, error: res.resumeNotFound ? 'session-not-found' : 'spawn-failed' };
     }
@@ -255,9 +271,14 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       const agentId = leadAgentIdFor(project);
       if (deps.leadLock.holder(agentId) !== null || deps.isRunning(agentId)) return { ok: false, error: 'busy' };
       // Nothing of ours to drop. Claude's own trust for the folder may be the person's, so it stays.
-      if (!project.trusted) return { ok: true, done: true };
+      if (!project.trusted && project.claudeTrustToDrop.length === 0) return { ok: true, done: true };
       const forgotten = deps.leadLock.run(agentId, 'forget', async (): Promise<RoomDone> => {
         try {
+          // Read again under the lock, then what an earlier revoke left behind goes first (ADR 0018).
+          const project = await findProject(projectId, false);
+          if (!project) return { ok: false, error: 'unknown-project' };
+          if (!(await deps.retryClaudeTrustDrop(project))) return { ok: false, error: 'forget-failed' };
+          if (!project.trusted) return { ok: true, done: true };
           const cwd = await deps.resolveProjectCwd(project.path);
           // A part not saved leaves the project trusted: the button stays and the person retries.
           if (!(await deps.forgetTrust(project, cwd))) return { ok: false, error: 'forget-failed' };

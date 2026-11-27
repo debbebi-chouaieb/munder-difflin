@@ -29,6 +29,11 @@ export interface StoredProject {
    * joined by ",". A re-clone of another repo at `trustedPath` does not match.
    */
   trustedRoot?: string;
+  /**
+   * Folders whose Claude folder trust (~/.claude.json) main dropped stored trust for
+   * but could not remove yet (ADR 0018). Retried before the next open or forget.
+   */
+  claudeTrustToDrop?: string[];
   /** Room ZetaHub section on or off (ADR 0005); absent: shown when the project has a key. */
   showZetahub?: boolean;
   /** The agent the room's lead runs as (ADR 0015); absent: the repo's setting, else the hive default. */
@@ -36,7 +41,7 @@ export interface StoredProject {
 }
 
 /** A change to one project. `zetahubKey: null` removes the user-set key; `showZetahub: null` returns to auto. */
-export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'trustedRoot' | 'showZetahub' | 'mainAgent'>> & {
+export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'trustedRoot' | 'claudeTrustToDrop' | 'showZetahub' | 'mainAgent'>> & {
   zetahubKey?: string | null;
   /** Null removes the room's choice. */
   mainAgent?: MainAgentRef | null;
@@ -44,6 +49,8 @@ export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'tru
   /** Null removes trust. */
   trustedPath?: string | null;
   trustedRoot?: string | null;
+  /** Null: nothing left to drop. */
+  claudeTrustToDrop?: string[] | null;
 };
 
 export interface ProjectsFile {
@@ -91,6 +98,8 @@ export interface Project {
    */
   trusted: boolean;
   trustedRoot: string | null;
+  /** Folders whose Claude trust is still to be dropped (ADR 0018); empty when none. */
+  claudeTrustToDrop: string[];
   /** Relative path from the "Local open work:" line of CLAUDE.md (ADR 0005), or null. */
   localWorkPath: string | null;
   /** The user's choice for the room ZetaHub section; null: auto (see `zetahubShown`). */
@@ -171,6 +180,12 @@ export function isValidTrustedRoot(value: unknown): value is string {
   return typeof value === 'string' && TRUSTED_ROOT.test(value);
 }
 
+/** The stored project path and the folder the lead resolved to: one or two non-empty paths (ADR 0018). */
+export function isClaudeTrustToDrop(value: unknown): value is string[] {
+  return Array.isArray(value) && value.length >= 1 && value.length <= 2
+    && value.every((p) => typeof p === 'string' && p.length > 0 && p.length <= MAX_TRUSTED_PATH);
+}
+
 /** The stored form of `git rev-list --max-parents=0 HEAD` output, or null when it names no valid root. */
 export function trustedRootFrom(revListOutput: string): string | null {
   const roots = [...new Set(revListOutput.split(/\s+/).map((line) => line.trim()).filter(Boolean))].sort();
@@ -245,6 +260,7 @@ export function mergeProjects(folders: ProjectFolder[], stored: ProjectsFile): P
         // A record saved before ADR 0007 has no root: ask once more.
         trusted: !!saved?.trustedPath && !!saved.trustedRoot && samePath(saved.trustedPath, folder.path),
         trustedRoot: saved?.trustedRoot ?? null,
+        claudeTrustToDrop: saved?.claudeTrustToDrop ? [...saved.claudeTrustToDrop] : [],
         localWorkPath: parseLocalWorkPath(folder.claudeMd),
         showZetahub: typeof saved?.showZetahub === 'boolean' ? saved.showZetahub : null,
         mainAgent: saved?.mainAgent ? { ...saved.mainAgent } : null,
@@ -290,6 +306,7 @@ export function parseProjectsFile(raw: unknown): ProjectsFile {
       ...(typeof v.leadAgentId === 'string' && v.leadAgentId ? { leadAgentId: v.leadAgentId } : {}),
       ...(typeof v.trustedPath === 'string' && v.trustedPath && v.trustedPath.length <= MAX_TRUSTED_PATH ? { trustedPath: v.trustedPath } : {}),
       ...(isValidTrustedRoot(v.trustedRoot) ? { trustedRoot: v.trustedRoot } : {}),
+      ...(isClaudeTrustToDrop(v.claudeTrustToDrop) ? { claudeTrustToDrop: [...v.claudeTrustToDrop] } : {}),
       ...(typeof v.showZetahub === 'boolean' ? { showZetahub: v.showZetahub } : {}),
       ...(isMainAgentRef(v.mainAgent) ? { mainAgent: { scope: v.mainAgent.scope, file: v.mainAgent.file } } : {})
     };
@@ -340,6 +357,8 @@ export function patchStoredProject(file: ProjectsFile, id: string, patch: Stored
   }
   if (patch.trustedRoot === null) delete next.trustedRoot;
   else if (isValidTrustedRoot(patch.trustedRoot)) next.trustedRoot = patch.trustedRoot;
+  if (patch.claudeTrustToDrop === null) delete next.claudeTrustToDrop;
+  else if (isClaudeTrustToDrop(patch.claudeTrustToDrop)) next.claudeTrustToDrop = [...patch.claudeTrustToDrop];
   if (patch.showZetahub === null) delete next.showZetahub;
   else if (typeof patch.showZetahub === 'boolean') next.showZetahub = patch.showZetahub;
   if (patch.mainAgent === null) delete next.mainAgent;
