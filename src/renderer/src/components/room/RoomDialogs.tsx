@@ -228,3 +228,29 @@ export function TicketDetailsDialog({ detail, onClose }: { detail: TicketDetail;
     </Dialog>
   );
 }
+
+/** Before an agent file goes to the trash (ADR 0015). The name is a checked agent name. */
+export function RoomTrashAgentDialog({ name, isLead, onConfirm, onCancel }: {
+  name: string;
+  /** The room's lead runs as this agent. */
+  isLead: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Dialog
+      title={t('room.agents.trashTitle')}
+      onCancel={onCancel}
+      actions={(
+        <>
+          <PixelButton variant="ghost" onClick={onCancel}>{t('room.agents.trashCancel')}</PixelButton>
+          <PixelButton variant="destructive" onClick={onConfirm}>{t('room.agents.trashConfirm')}</PixelButton>
+        </>
+      )}
+    >
+      <p style={{ margin: 0 }}>{t('room.agents.trashBody', { name })}</p>
+      {isLead && <p style={{ ...warning, marginTop: 8 }}>{t('room.agents.trashLead')}</p>}
+    </Dialog>
+  );
+}

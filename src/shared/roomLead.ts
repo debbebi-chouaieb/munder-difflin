@@ -3,6 +3,8 @@
 // sends a project id, an optional session id and the person's trust answer.
 
 import { isValidSessionId } from './sessionList';
+import { resolveMainAgent, type MainAgent } from './mainAgent';
+import type { Project, ProjectsSnapshot } from './project';
 
 /**
  * Room leads use `lead--<projectId>`. Add Agent ids are `<slug>-<time>` and the
@@ -140,6 +142,35 @@ export interface LeadSpawnOptions {
   /** No folder-trust pre-accept and no auto-mode flag (ADR 0005). */
   untrusted: boolean;
   hive: { id: string; name: string; role: 'lead'; cwd: string; provider: 'claude' };
+}
+
+/** The project a lead id belongs to in a snapshot. */
+export function leadProjectOf(leadId: string, snapshot: ProjectsSnapshot | null): Project | null {
+  return snapshot?.projects.find((p) => leadAgentIdFor(p) === leadId) ?? null;
+}
+
+/** Why a lead starts without the room's choice; null when nothing held it back. */
+export type LeadAgentHeld = 'late' | 'no-project' | 'other-folder' | 'untrusted' | null;
+
+/**
+ * The agent a lead spawn runs as (ADR 0015). `cwdIsProject`: the spawn's folder is
+ * the project's own, so a lead id cannot carry one room's choice into another
+ * folder. A project agent's frontmatter can set permissions and hooks, so a choice
+ * from the repo applies only to a trusted lead; the user's global agents always may.
+ */
+export function leadAgentOf(input: {
+  snapshot: ProjectsSnapshot | null;
+  project: Project | null;
+  cwdIsProject: boolean;
+  trusted: boolean;
+}): { agent: MainAgent; held: LeadAgentHeld } {
+  const hive: MainAgent = { source: 'hive' };
+  if (!input.snapshot) return { agent: hive, held: 'late' };
+  if (!input.project) return { agent: hive, held: 'no-project' };
+  if (!input.cwdIsProject) return { agent: hive, held: 'other-folder' };
+  const agent = resolveMainAgent(input.project, input.snapshot.globalAgents);
+  if (agent.source === 'room' && agent.scope === 'project' && !input.trusted) return { agent: hive, held: 'untrusted' };
+  return { agent, held: null };
 }
 
 /** The stored lead id when it is one we made, else `lead--<projectId>`. */

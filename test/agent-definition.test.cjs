@@ -6,7 +6,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const loadTs = require('./load-ts.cjs');
 
-const { parseAgentFrontmatter, agentDefinitionsFrom, isKnownModel, agentNameOfFile } = loadTs('src/shared/agentDefinition.ts');
+const { parseAgentFrontmatter, agentDefinitionsFrom, isKnownModel, agentNameOfFile, toolsDelegate } = loadTs('src/shared/agentDefinition.ts');
 
 const fm = (body) => `---\n${body}\n---\n# Body\n`;
 
@@ -21,8 +21,8 @@ test('frontmatter: plain, quoted and commented values', () => {
 });
 
 test('frontmatter: CRLF, a BOM and other keys are fine', () => {
-  const text = '﻿---\r\nname: a\r\ntools: Read, Grep\r\nmodel: haiku\r\n---\r\nbody';
-  assert.deepEqual(parseAgentFrontmatter(text), { name: 'a', model: 'haiku' });
+  const text = '﻿---\r\nname: a\r\ntools: Read, Grep\r\ncolor: blue\r\nmodel: haiku\r\n---\r\nbody';
+  assert.deepEqual(parseAgentFrontmatter(text), { name: 'a', tools: 'Read, Grep', model: 'haiku' });
 });
 
 test('frontmatter: anything not understood gives nothing for that key', () => {
@@ -68,4 +68,21 @@ test('definitions: frontmatter wins when valid, else the file name; text is clea
   assert.ok(defs[0].description.endsWith('…'));
   assert.equal(defs[1].description, 'x y z', 'bidi overrides and controls are removed');
   assert.equal(defs[2].description, null);
+});
+
+test('delegates: only a tools line without Agent or Task says no (ADR 0015)', () => {
+  assert.equal(toolsDelegate(undefined), true, 'no tools line: all tools');
+  assert.equal(toolsDelegate('Read, Grep, Glob, Bash'), false);
+  assert.equal(toolsDelegate('Read, Agent'), true);
+  assert.equal(toolsDelegate('Task'), true, 'the older name');
+  assert.equal(toolsDelegate('Read, Agent(worker, reviewer)'), true);
+  assert.equal(toolsDelegate('Read, AgentX'), false);
+  const [readOnly, all, flow] = agentDefinitionsFrom([
+    { file: 'a.md', head: fm('tools: Read, Grep') },
+    { file: 'b.md', head: fm('name: b') },
+    { file: 'c.md', head: fm('tools: [Read]') }
+  ]);
+  assert.equal(readOnly.delegates, false);
+  assert.equal(all.delegates, true);
+  assert.equal(flow.delegates, true, 'a line we cannot read is no warning');
 });

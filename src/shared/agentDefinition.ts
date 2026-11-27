@@ -19,7 +19,17 @@ export interface AgentDefinition {
   model: string | null;
   /** One clean line of at most DESCRIPTION_MAX_CHARS, or null. */
   description: string | null;
+  /**
+   * False only when a `tools` line lists tools and names neither `Agent` nor `Task`:
+   * such an agent cannot start subagents, so as a room lead it cannot delegate (ADR 0015).
+   * A missing or unreadable `tools` line gives true, Claude's own default of all tools.
+   */
+  delegates: boolean;
 }
+
+/** Open or trash of an agent file from the room panel (ADR 0015). */
+export type AgentFileError = 'invalid-request' | 'unknown-agent' | 'not-a-file' | 'open-failed' | 'trash-failed';
+export type AgentFileResult = { ok: true } | { ok: false; error: AgentFileError };
 
 export const AGENT_HEAD_BYTES = 8 * 1024;
 export const MAX_AGENT_FILES = 100;
@@ -29,7 +39,9 @@ const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const MODEL_ALIASES = new Set(['opus', 'sonnet', 'haiku', 'fable', 'inherit']);
 const MODEL_ID = /^claude-[a-z0-9]+(?:[.-][a-z0-9]+){0,8}$/;
 const MODEL_ID_MAX = 64;
-const WANTED = ['name', 'model', 'description'] as const;
+const WANTED = ['name', 'model', 'description', 'tools'] as const;
+/** Tools that start a subagent; `Task` is the older name of `Agent`. */
+const DELEGATING_TOOLS = new Set(['Agent', 'Task']);
 type Field = (typeof WANTED)[number];
 
 export function isAgentName(value: string): boolean {
@@ -58,14 +70,21 @@ export function agentDefinitionsFrom(files: AgentFileHead[]): AgentDefinition[] 
       file: key,
       name: fields.name && isAgentName(fields.name) ? fields.name : key,
       model: fields.model && isKnownModel(fields.model) ? fields.model : null,
-      description: cleanText(fields.description, DESCRIPTION_MAX_CHARS)
+      description: cleanText(fields.description, DESCRIPTION_MAX_CHARS),
+      delegates: toolsDelegate(fields.tools)
     });
   }
   return [...byFile.values()].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
 
+/** A comma-separated `tools` value; `Agent(worker, reviewer)` counts as `Agent`. */
+export function toolsDelegate(tools: string | undefined): boolean {
+  if (tools === undefined) return true;
+  return tools.split(/,(?![^(]*\))/).some((tool) => DELEGATING_TOOLS.has(tool.trim().replace(/\(.*$/, '').trim()));
+}
+
 /**
- * The `name`, `model` and `description` of a `---` fenced frontmatter block. Only
+ * The `name`, `model`, `description` and `tools` of a `---` fenced frontmatter block. Only
  * top-level `key: value` lines with a plain or quoted single-line value count; a
  * block scalar, a duplicate key or a block that does not close gives nothing.
  */

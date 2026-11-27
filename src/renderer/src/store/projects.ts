@@ -5,6 +5,7 @@
  */
 import { create } from 'zustand';
 import type { ProjectResult, ProjectsSnapshot } from '@shared/project';
+import type { MainAgentRef } from '@shared/mainAgent';
 import { PROJECT_SIDEBAR_DEFAULT_WIDTH, clampProjectSidebarWidth } from './projectSidebar';
 
 const LS_COLLAPSED = 'cth.projectSidebarCollapsed';
@@ -39,6 +40,8 @@ interface ProjectsState {
   setZetahubKey: (id: string, key: string | null) => Promise<void>;
   /** The room's ZetaHub section on or off; null returns it to auto. */
   setShowZetahub: (id: string, show: boolean | null) => Promise<void>;
+  /** The room lead's agent (ADR 0015); null returns to the repo setting or the hive default. */
+  setMainAgent: (id: string, ref: MainAgentRef | null) => Promise<void>;
 }
 
 function readBool(key: string): boolean {
@@ -107,6 +110,7 @@ export const useProjects = create<ProjectsState>((set) => {
     setEnabled: (id, enabled) => apply(() => window.cth.setProjectEnabled(id, enabled)),
     setParallel: (id, parallel) => apply(() => window.cth.setProjectParallel(id, parallel)),
     setZetahubKey: (id, key) => apply(() => window.cth.setProjectZetahubKey(id, key)),
-    setShowZetahub: (id, show) => apply(() => window.cth.setProjectShowZetahub(id, show))
+    setShowZetahub: (id, show) => apply(() => window.cth.setProjectShowZetahub(id, show)),
+    setMainAgent: (id, ref) => apply(() => window.cth.setProjectMainAgent(id, ref))
   };
 });

@@ -1504,7 +1504,33 @@
       "confirm": "停止并打开"
     },
     "agents": {
-      "title": "代理"
+      "title": "代理",
+      "leadLabel": "负责人运行为",
+      "leadDefaultHive": "蜂巢默认",
+      "leadDefaultSettings": "项目设置：{{name}}",
+      "leadOptionGlobal": "{{name}}（全局）",
+      "leadOptionMissing": "{{name}}（已不在列表中）",
+      "leadMissing": "所选负责人代理 {{name}} 已不在列表中；负责人将不使用它启动。",
+      "leadAmbiguous": "另一个代理文件也名为 {{name}}，负责人无法区分；将不使用任一代理启动。请重命名其中一个。",
+      "leadNeedsTrust": "项目代理只能担任受信任房间的负责人：在你信任此项目之前，负责人将不使用它启动。",
+      "leadNoDelegate": "此代理的工具不包含 Agent，作为负责人无法把工作交给子代理。",
+      "leadNextStart": "更改将在负责人下次启动时生效。",
+      "leadBadge": "负责人",
+      "open": "打开",
+      "openTitle": "在编辑器中打开代理文件",
+      "trash": "移除",
+      "trashTitle": "将此代理文件移到回收站？",
+      "trashBody": "{{name}} 将被移到回收站，可以从那里恢复。",
+      "trashLead": "本房间的负责人以此代理运行。之后将不使用它启动。",
+      "trashCancel": "取消",
+      "trashConfirm": "移到回收站",
+      "errors": {
+        "invalid-request": "该代理请求无效。",
+        "unknown-agent": "该代理已不在列表中。请重新扫描。",
+        "not-a-file": "该代理的文件缺失或不是普通文件。",
+        "open-failed": "无法打开代理文件。",
+        "trash-failed": "无法将代理文件移到回收站。"
+      }
     },
     "sessions": {
       "title": "会话",

@@ -609,7 +609,9 @@ test('preload sends only a project id and a request object for room calls', () =
 test('wiring: spawn core decides lead trust and applies the posture; automation honours the gate', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
   assert.match(src, /const lead = leadIdOfSpawn\(opts\.id, opts\.hive\?\.id\);\s*if \(!lead\.ok\) return \{ ok: false, error: lead\.error \};/);
-  assert.match(src, /trustedLeadCwd = await roomWiring\.trustedLeadFolder\(lead\.leadId, opts\.cwd, await projectsWithin\(LEAD_TRUST_WAIT_MS\)\);\s*if \(!trustedLeadCwd\) opts\.untrusted = true;/);
+  assert.match(src, /leadSnapshot = await snapshotWithin\(LEAD_TRUST_WAIT_MS\);\s*trustedLeadCwd = await roomWiring\.trustedLeadFolder\(lead\.leadId, opts\.cwd, leadSnapshot\?\.projects \?\? null\);\s*if \(!trustedLeadCwd\) opts\.untrusted = true;/);
+  // ADR 0015: the lead's --agent is main's answer from the same snapshot, on every lead spawn.
+  assert.match(src, /if \(opts\.hive\) opts\.hive = \{ \.\.\.opts\.hive, provider \};\s*\/\/[^\n]*\n\s*if \(lead\.leadId && claudeProvider\) \{\s*opts\.args = withLeadAgentArgs\(opts\.args \?\? \[\], await leadAgentFor\(lead\.leadId, opts\.cwd, opts\.untrusted !== true, leadSnapshot\)\);/);
   assert.match(src, /if \(trustedLeadCwd && opts\.untrusted !== true && !\(await roomWiring\.stillLeadFolder\(opts\.cwd, trustedLeadCwd\)\)\) \{\s*return \{ ok: false/);
   assert.match(src, /if \(claudeProvider && opts\.untrusted === true\) opts\.args = withoutClaudeBypassArgs\(opts\.args \?\? \[\]\);/);
   assert.match(src, /if \(claudeProvider && spawnPosture\(opts\.untrusted === true, false\)\.preAcceptTrust\) \{\s*try \{ ensureClaudePermissionsAccepted/);

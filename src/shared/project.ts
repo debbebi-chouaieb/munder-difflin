@@ -1,4 +1,5 @@
-import { agentDefinitionsFrom, type AgentDefinition, type AgentFileHead } from './agentDefinition';
+import { agentDefinitionsFrom, isAgentName, parseAgentFrontmatter, type AgentDefinition, type AgentFileHead } from './agentDefinition';
+import { isMainAgentRef, type MainAgentRef } from './mainAgent';
 
 /**
  * Workspace projects (ADR 0001): each non-hidden, top-level git folder of the
@@ -30,11 +31,15 @@ export interface StoredProject {
   trustedRoot?: string;
   /** Room ZetaHub section on or off (ADR 0005); absent: shown when the project has a key. */
   showZetahub?: boolean;
+  /** The agent the room's lead runs as (ADR 0015); absent: the repo's setting, else the hive default. */
+  mainAgent?: MainAgentRef;
 }
 
 /** A change to one project. `zetahubKey: null` removes the user-set key; `showZetahub: null` returns to auto. */
-export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'trustedRoot' | 'showZetahub'>> & {
+export type StoredProjectPatch = Partial<Omit<StoredProject, 'zetahubKey' | 'trustedPath' | 'trustedRoot' | 'showZetahub' | 'mainAgent'>> & {
   zetahubKey?: string | null;
+  /** Null removes the room's choice. */
+  mainAgent?: MainAgentRef | null;
   showZetahub?: boolean | null;
   /** Null removes trust. */
   trustedPath?: string | null;
@@ -58,6 +63,13 @@ export interface ProjectFolder {
   claudeMd: string | null;
   /** `.md` files found in `.claude/agents/`, each with the head main read (ADR 0009). */
   agentFiles: AgentFileHead[];
+  /** The `agent` key of `.claude/settings.local.json`, else `.claude/settings.json` (ADR 0015). */
+  settingsAgent: string | null;
+  /**
+   * Every entry of `.claude/agents` was a plain `.md` file with a valid name, within
+   * the cap, and `.claude` is a real folder (or absent). See `agentsFullyRead`.
+   */
+  agentsListedFully: boolean;
 }
 
 export interface Project {
@@ -83,6 +95,12 @@ export interface Project {
   localWorkPath: string | null;
   /** The user's choice for the room ZetaHub section; null: auto (see `zetahubShown`). */
   showZetahub: boolean | null;
+  /** The room's choice of lead agent (ADR 0015); see `resolveMainAgent`. */
+  mainAgent: MainAgentRef | null;
+  /** The repo's own `agent` setting, which Claude applies by itself. */
+  settingsAgent: string | null;
+  /** The scan understood every agent Claude could load from this repo; else no global agent can be its lead (ADR 0015). */
+  agentsFullyRead: boolean;
 }
 
 export interface ProjectsSnapshot {
@@ -228,9 +246,24 @@ export function mergeProjects(folders: ProjectFolder[], stored: ProjectsFile): P
         trusted: !!saved?.trustedPath && !!saved.trustedRoot && samePath(saved.trustedPath, folder.path),
         trustedRoot: saved?.trustedRoot ?? null,
         localWorkPath: parseLocalWorkPath(folder.claudeMd),
-        showZetahub: typeof saved?.showZetahub === 'boolean' ? saved.showZetahub : null
+        showZetahub: typeof saved?.showZetahub === 'boolean' ? saved.showZetahub : null,
+        mainAgent: saved?.mainAgent ? { ...saved.mainAgent } : null,
+        settingsAgent: folder.settingsAgent,
+        agentsFullyRead: agentsFullyRead(folder)
       };
     });
+}
+
+/**
+ * Whether the scan saw every name Claude could give the repo's agents: the folder was
+ * listed fully and each file's frontmatter `name` was read. A name we did not read
+ * (a cut head, a block scalar) could be any name, a global agent's included.
+ */
+export function agentsFullyRead(folder: Pick<ProjectFolder, 'agentsListedFully' | 'agentFiles'>): boolean {
+  return folder.agentsListedFully && folder.agentFiles.every((h) => {
+    const name = h.head === null ? undefined : parseAgentFrontmatter(h.head).name;
+    return name !== undefined && isAgentName(name);
+  });
 }
 
 /**
@@ -257,7 +290,8 @@ export function parseProjectsFile(raw: unknown): ProjectsFile {
       ...(typeof v.leadAgentId === 'string' && v.leadAgentId ? { leadAgentId: v.leadAgentId } : {}),
       ...(typeof v.trustedPath === 'string' && v.trustedPath && v.trustedPath.length <= MAX_TRUSTED_PATH ? { trustedPath: v.trustedPath } : {}),
       ...(isValidTrustedRoot(v.trustedRoot) ? { trustedRoot: v.trustedRoot } : {}),
-      ...(typeof v.showZetahub === 'boolean' ? { showZetahub: v.showZetahub } : {})
+      ...(typeof v.showZetahub === 'boolean' ? { showZetahub: v.showZetahub } : {}),
+      ...(isMainAgentRef(v.mainAgent) ? { mainAgent: { scope: v.mainAgent.scope, file: v.mainAgent.file } } : {})
     };
   }
   return file;
@@ -308,6 +342,8 @@ export function patchStoredProject(file: ProjectsFile, id: string, patch: Stored
   else if (isValidTrustedRoot(patch.trustedRoot)) next.trustedRoot = patch.trustedRoot;
   if (patch.showZetahub === null) delete next.showZetahub;
   else if (typeof patch.showZetahub === 'boolean') next.showZetahub = patch.showZetahub;
+  if (patch.mainAgent === null) delete next.mainAgent;
+  else if (isMainAgentRef(patch.mainAgent)) next.mainAgent = { scope: patch.mainAgent.scope, file: patch.mainAgent.file };
   const projects: Record<string, StoredProject> = Object.assign(Object.create(null), file.projects);
   projects[id] = next;
   return { version: 1, projects };

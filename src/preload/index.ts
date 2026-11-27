@@ -6,6 +6,8 @@ import type { IntegrationRecord, IntegrationTemplate } from '../shared/integrati
 export type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 import type { UpdateStatus } from '../shared/updateState';
 import type { ProjectResult, ProjectsSnapshot } from '../shared/project';
+import type { AgentScope, MainAgentRef } from '../shared/mainAgent';
+import type { AgentFileResult } from '../shared/agentDefinition';
 import type { OpenTerminalRequest, OpenTerminalResult, RoomDone, RoomResult } from '../shared/roomLead';
 import type { SessionSummary } from '../shared/sessionList';
 import type { RoomTickets } from '../shared/ticketSources';
@@ -654,6 +656,14 @@ const api = {
     ipcRenderer.invoke('projects:setZetahubKey', id, key),
   setProjectShowZetahub: (id: string, show: boolean | null): Promise<ProjectResult> =>
     ipcRenderer.invoke('projects:setShowZetahub', id, show),
+  /** The agent the room's lead runs as from its next start (ADR 0015); null: the repo setting or the hive default. */
+  setProjectMainAgent: (id: string, ref: MainAgentRef | null): Promise<ProjectResult> =>
+    ipcRenderer.invoke('projects:setMainAgent', id, ref),
+  /** Agent definition files by key (ADR 0015); main builds the path. `projectId` is null for a global agent. */
+  openAgentFile: (scope: AgentScope, projectId: string | null, file: string): Promise<AgentFileResult> =>
+    ipcRenderer.invoke('agents:open', scope, projectId, file),
+  trashAgentFile: (scope: AgentScope, projectId: string | null, file: string): Promise<AgentFileResult> =>
+    ipcRenderer.invoke('agents:trash', scope, projectId, file),
   // Project rooms (ADR 0005): every call takes a project id only.
   roomSessions: (projectId: string): Promise<RoomResult<{ sessions: SessionSummary[] }>> =>
     ipcRenderer.invoke('room:sessions', projectId),

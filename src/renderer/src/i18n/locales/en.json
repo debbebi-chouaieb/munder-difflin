@@ -1504,7 +1504,33 @@
       "confirm": "Stop and open"
     },
     "agents": {
-      "title": "AGENTS"
+      "title": "AGENTS",
+      "leadLabel": "Lead runs as",
+      "leadDefaultHive": "Hive default",
+      "leadDefaultSettings": "Project setting: {{name}}",
+      "leadOptionGlobal": "{{name}} (global)",
+      "leadOptionMissing": "{{name}} (no longer listed)",
+      "leadMissing": "The chosen lead agent {{name}} is no longer listed; the lead starts without it.",
+      "leadAmbiguous": "Another agent file is also named {{name}}, so the lead cannot tell them apart; it starts without one. Rename one of them.",
+      "leadNeedsTrust": "A project agent leads only a trusted room: until you trust this project, the lead starts without it.",
+      "leadNoDelegate": "This agent's tools do not include Agent, so as lead it cannot hand work to subagents.",
+      "leadNextStart": "A change applies when the lead starts next.",
+      "leadBadge": "lead",
+      "open": "Open",
+      "openTitle": "Open the agent file in your editor",
+      "trash": "Remove",
+      "trashTitle": "Move this agent file to the trash?",
+      "trashBody": "{{name}} is moved to the trash. You can restore it from there.",
+      "trashLead": "The room's lead runs as this agent. After this it starts without it.",
+      "trashCancel": "Cancel",
+      "trashConfirm": "Move to trash",
+      "errors": {
+        "invalid-request": "That agent request was not valid.",
+        "unknown-agent": "That agent is no longer listed. Rescan to refresh.",
+        "not-a-file": "That agent's file is missing or not a plain file.",
+        "open-failed": "The agent file could not be opened.",
+        "trash-failed": "The agent file could not be moved to the trash."
+      }
     },
     "sessions": {
       "title": "SESSIONS",

@@ -262,7 +262,7 @@ export function RoomPanel({ projectId }: { projectId: string }) {
             onOpen={(sessionId) => void open({ sessionId })}
           />
           <RoomTaskColumns tickets={tickets} errorKey={ticketsError} onUseKey={(key) => void setZetahubKey(project.id, key)} />
-          <RoomAgentList agents={project.agents} />
+          <RoomAgentList project={project} leadRunning={leadRunning} onNotice={(key) => setNotice({ key, warn: true })} />
         </div>
         {leadRunning && leadId && (
           <>

@@ -22,6 +22,8 @@ function folder(name, over = {}) {
     isGitRepo: true,
     claudeMd: null,
     agentFiles: [],
+    settingsAgent: null,
+    agentsListedFully: true,
     ...over
   };
 }
@@ -96,7 +98,7 @@ test('new projects start disabled and serial; stored state wins', () => {
   assert.equal(mdm.parallel, false);
   assert.equal(mdm.zetahubKey, 'MDM');
   assert.equal(mdm.zetahubKeySource, 'claude-md');
-  assert.deepEqual(mdm.agents, [{ file: 'go-dev', name: 'go-dev', model: null, description: null }]);
+  assert.deepEqual(mdm.agents, [{ file: 'go-dev', name: 'go-dev', model: null, description: null, delegates: true }]);
 });
 
 test('a folder named like an Object.prototype key gets default state', () => {
@@ -203,8 +205,8 @@ test('readWorkspace finds only git folders and reads their CLAUDE.md and agents'
   assert.equal(list[0].hasClaudeMd, true, '.claude/CLAUDE.md is found too');
   assert.equal(list[1].zetahubKey, 'MDM');
   assert.deepEqual(list[1].agents, [
-    { file: 'go-dev', name: 'go-dev', model: null, description: null },
-    { file: 'reviewer', name: 'code-reviewer', model: 'sonnet', description: 'Reviews diffs.' }
+    { file: 'go-dev', name: 'go-dev', model: null, description: null, delegates: true },
+    { file: 'reviewer', name: 'code-reviewer', model: 'sonnet', description: 'Reviews diffs.', delegates: true }
   ]);
   const heads = res.folders.find((f) => f.name === 'mdm-platform').agentFiles;
   assert.deepEqual(heads.map((h) => h.file), ['go-dev.md', 'reviewer.md'], 'only valid .md names are opened');
@@ -247,7 +249,7 @@ test('the service is empty until a workspace is picked, then persists toggles', 
   const empty = await svc.rescan();
   assert.equal(empty.workspaceRoot, null);
   assert.deepEqual(empty.projects, []);
-  assert.deepEqual(empty.globalAgents, [{ file: 'reviewer', name: 'reviewer', model: 'sonnet', description: 'Reviews code.' }]);
+  assert.deepEqual(empty.globalAgents, [{ file: 'reviewer', name: 'reviewer', model: 'sonnet', description: 'Reviews code.', delegates: true }]);
 
   assert.equal((await svc.setWorkspaceRoot('relative/path')).ok, false);
   assert.equal((await svc.setWorkspaceRoot('\\\\attacker\\share')).ok, false);
@@ -485,4 +487,91 @@ test('show ZetaHub: the choice wins, else shown only with a key', () => {
   assert.equal(shared.zetahubShown({ showZetahub: null, zetahubKey: null }), false);
   assert.equal(shared.zetahubShown({ showZetahub: false, zetahubKey: 'APP' }), false);
   assert.equal(shared.zetahubShown({ showZetahub: true, zetahubKey: null }), true);
+});
+
+// ─── room lead agent (ADR 0015) ──────────────────────────────────────────────
+
+test('main agent: the file keeps only a valid ref; patch sets and removes it', () => {
+  const file = shared.parseProjectsFile({ projects: {
+    a: { mainAgent: { scope: 'project', file: 'go-dev' } },
+    b: { mainAgent: { scope: 'elsewhere', file: 'go-dev' } },
+    c: { mainAgent: { scope: 'global', file: '../evil' } },
+    d: { mainAgent: 'go-dev' }
+  } });
+  assert.deepEqual(file.projects.a.mainAgent, { scope: 'project', file: 'go-dev' });
+  for (const id of ['b', 'c', 'd']) assert.equal('mainAgent' in file.projects[id], false, id);
+  const set = shared.patchStoredProject(shared.emptyProjectsFile(), 'a', { mainAgent: { scope: 'global', file: 'reviewer', extra: 1 } });
+  assert.deepEqual(set.projects.a.mainAgent, { scope: 'global', file: 'reviewer' }, 'extra fields are not stored');
+  assert.equal('mainAgent' in shared.patchStoredProject(set, 'a', { mainAgent: null }).projects.a, false);
+  assert.deepEqual(shared.patchStoredProject(set, 'a', { enabled: true }).projects.a.mainAgent, { scope: 'global', file: 'reviewer' });
+});
+
+test('readWorkspace reads the repo agent setting, local file first, bounded and checked', async (t) => {
+  const env = makeWorkspace(t);
+  const claude = (name) => path.join(env.ws, name, '.claude');
+  fs.writeFileSync(path.join(claude('mdm-platform'), 'settings.json'), '{"agent":"go-dev"}');
+  fs.writeFileSync(path.join(claude('mdm-platform'), 'settings.local.json'), '﻿{"agent":"reviewer"}');
+  fs.writeFileSync(path.join(claude('mdm-core'), 'settings.local.json'), '{"agent":"bad name!"}');
+  fs.writeFileSync(path.join(claude('mdm-core'), 'settings.json'), `{"agent":"go-dev","pad":"${'x'.repeat(70 * 1024)}"}`);
+  const res = await readWorkspace(env.ws);
+  const byName = Object.fromEntries(res.folders.map((f) => [f.name, f.settingsAgent]));
+  assert.equal(byName['mdm-platform'], 'reviewer', 'the local file wins');
+  assert.equal(byName['mdm-core'], null, 'an invalid name and a too-large file give nothing');
+});
+
+test('setMainAgent: only listed, unshadowed definitions; null clears', async (t) => {
+  const env = makeWorkspace(t);
+  fs.writeFileSync(path.join(env.globals, 'planner.md'), '---\nname: planner\n---\n');
+  fs.writeFileSync(path.join(env.globals, 'code-reviewer.md'), '---\nname: code-reviewer\n---\n');
+  // Every project agent names itself, so the scan read the folder fully and globals may lead.
+  fs.writeFileSync(path.join(env.ws, 'mdm-platform', '.claude', 'agents', 'go-dev.md'), '---\nname: go-dev\n---\n');
+  const { svc } = service(env);
+  await svc.setWorkspaceRoot(env.ws);
+  const lead = (res) => res.snapshot.projects.find((p) => p.id === 'mdm-platform').mainAgent;
+
+  assert.deepEqual(lead(svc.setMainAgent('mdm-platform', { scope: 'project', file: 'reviewer' })), { scope: 'project', file: 'reviewer' });
+  assert.deepEqual(lead(svc.setMainAgent('mdm-platform', { scope: 'global', file: 'planner' })), { scope: 'global', file: 'planner' });
+  assert.deepEqual(svc.setMainAgent('mdm-platform', { scope: 'project', file: 'missing' }), { ok: false, error: 'unknown agent' });
+  assert.deepEqual(svc.setMainAgent('mdm-platform', { scope: 'global', file: 'code-reviewer' }), { ok: false, error: 'unknown agent' },
+    'the project agent named code-reviewer shadows the global one');
+  assert.deepEqual(svc.setMainAgent('mdm-platform', { scope: 'project', file: '../x' }), { ok: false, error: 'invalid agent' });
+  assert.deepEqual(svc.setMainAgent('nope', { scope: 'project', file: 'reviewer' }), { ok: false, error: 'unknown project' });
+  assert.equal(lead(svc.setMainAgent('mdm-platform', null)), null);
+});
+
+test('agents fully read: listing, names and a linked .claude decide it (ADR 0015)', async (t) => {
+  const env = makeWorkspace(t);
+  const agents = path.join(env.ws, 'mdm-platform', '.claude', 'agents');
+  const fullyRead = async () => {
+    const res = await readWorkspace(env.ws);
+    return shared.mergeProjects(res.folders, shared.emptyProjectsFile()).find((p) => p.id === 'mdm-platform').agentsFullyRead;
+  };
+  assert.equal(await fullyRead(), false, 'go-dev.md has no frontmatter name');
+  fs.writeFileSync(path.join(agents, 'go-dev.md'), '---\nname: go-dev\n---\n');
+  assert.equal(await fullyRead(), true);
+  const core = (await readWorkspace(env.ws)).folders.find((f) => f.name === 'mdm-core');
+  assert.equal(core.agentsListedFully, true, 'no agents folder is nothing unread');
+  fs.writeFileSync(path.join(agents, 'bad name.md'), '---\nname: x\n---\n');
+  assert.equal(await fullyRead(), false, 'a file Claude may load but we skip');
+  fs.rmSync(path.join(agents, 'bad name.md'));
+  fs.mkdirSync(path.join(agents, 'nested'));
+  assert.equal(await fullyRead(), false, 'a subfolder');
+  fs.rmSync(path.join(agents, 'nested'), { recursive: true });
+  assert.equal(await fullyRead(), true);
+});
+
+test('a linked .claude folder is not followed for agents or settings (ADR 0015)', async (t) => {
+  const env = makeWorkspace(t);
+  const target = path.join(env.dir, 'elsewhere');
+  fs.mkdirSync(path.join(target, 'agents'), { recursive: true });
+  fs.writeFileSync(path.join(target, 'agents', 'planted.md'), '---\nname: planted\n---\n');
+  fs.writeFileSync(path.join(target, 'settings.json'), '{"agent":"planted"}');
+  fs.symlinkSync(target, path.join(env.ws, 'mdm-core', '.claude-link'), 'junction');
+  fs.rmSync(path.join(env.ws, 'mdm-core', '.claude'), { recursive: true });
+  fs.renameSync(path.join(env.ws, 'mdm-core', '.claude-link'), path.join(env.ws, 'mdm-core', '.claude'));
+  const core = (await readWorkspace(env.ws)).folders.find((f) => f.name === 'mdm-core');
+  assert.deepEqual(core.agentFiles, []);
+  assert.equal(core.settingsAgent, null);
+  assert.equal(core.agentsListedFully, false, 'Claude may still load agents through it');
+  assert.equal(core.claudeMd, null, 'its CLAUDE.md is not read either');
 });

@@ -38,12 +38,13 @@ import { readAgentUsage, readContextTokens, seedSessionTranscript, resolveSessio
 import { SessionLister } from './projectSessions';
 import { readRoomTickets } from './projectTickets';
 import { createRoomHandlers, registerRoomIpc } from './roomIpc';
-import { isLeadAgentId, leadAgentIdFor, leadIdOfSpawn, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
+import { isLeadAgentId, leadAgentIdFor, leadAgentOf, leadIdOfSpawn, leadProjectOf, spawnPosture, withoutClaudeBypassArgs } from '../shared/roomLead';
 import { roomIdleMinutes, roomPtyCap } from '../shared/roomLimits';
 import { createRoomIdleSweeper } from './roomIdle';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
-import type { Project, StoredProjectPatch } from '../shared/project';
+import type { ProjectsSnapshot, StoredProjectPatch } from '../shared/project';
+import { withLeadAgentArgs, type MainAgent } from '../shared/mainAgent';
 import { listIssues, listCIRuns } from './github';
 import { SlackWebhookServer, SlackReplyServer, postSlackReply, type SlackEventFile } from './slack';
 import {
@@ -62,6 +63,7 @@ import {
 import { transcribeWithGroq, DEFAULT_GROQ_MODEL } from './freeflow';
 import { registerRealtimeIpc } from './realtime';
 import { ProjectService, globalAgentsDirFor, registerProjectsIpc, projectsPusher } from './projects';
+import { createAgentFileHandlers, registerAgentFileIpc } from './agentFiles';
 import { busyTerminalIn, isLocalAbsolute, isNetworkPath, resolveAllowedRoot, ROOT_REFUSED } from './rootGuard';
 import { withoutWorkspaceRoot } from '../shared/project';
 import { registerRealtimeActionIpc } from './realtimeActions';
@@ -2673,8 +2675,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   // Minted before hive provisioning: the proxy bridge sidecar starts there and posts hooks too (ADR 0010).
   const spawnToken = spawnTokens.next();
   let trustedLeadCwd: string | null = null;
+  let leadSnapshot: ProjectsSnapshot | null = null;
   if (lead.leadId) {
-    trustedLeadCwd = await roomWiring.trustedLeadFolder(lead.leadId, opts.cwd, await projectsWithin(LEAD_TRUST_WAIT_MS));
+    leadSnapshot = await snapshotWithin(LEAD_TRUST_WAIT_MS);
+    trustedLeadCwd = await roomWiring.trustedLeadFolder(lead.leadId, opts.cwd, leadSnapshot?.projects ?? null);
     if (!trustedLeadCwd) opts.untrusted = true;
   }
   // Never start an agent in a network folder: even checking it (isRepo below)
@@ -2690,6 +2694,10 @@ async function spawnAgentCore(opts: AgentSpawnOptions, owner: Electron.WebConten
   const claudeProvider = isClaudeProvider(provider);
   opts.provider = provider;
   if (opts.hive) opts.hive = { ...opts.hive, provider };
+  // `--agent` is a Claude flag; leads are Claude today, and a later provider must not get it.
+  if (lead.leadId && claudeProvider) {
+    opts.args = withLeadAgentArgs(opts.args ?? [], await leadAgentFor(lead.leadId, opts.cwd, opts.untrusted !== true, leadSnapshot));
+  }
   // Activation-funnel entry (v0.4.6): every spawn REQUEST, so (attempted − spawned)
   // measures the fallout the whole rebuild exists to see. Gated on !noAutoInstall so
   // the missing-CLI relaunch (the only re-entry, index.ts install-exit handler) does
@@ -4585,15 +4593,41 @@ const projectService = new ProjectService({
   log: (message) => console.error(message)
 });
 registerProjectsIpc(projectService);
+// Agent files from the room panel (ADR 0015): opened in the editor or trashed, never written.
+registerAgentFileIpc(createAgentFileHandlers({
+  snapshot: () => projectService.current(),
+  globalAgentsDir: globalAgentsDirFor(process.env, homedir()),
+  openPath: (path) => shell.openPath(path),
+  trashItem: (path) => shell.trashItem(path),
+  rescan: () => projectService.rescan(),
+  log: (line) => console.error(line)
+}));
 
 // ─── IPC: project rooms (ADR 0005) ───────────────────────────────────────────
 /** A stalled scan (a slow mapped drive) must not hang a lead spawn; late means untrusted. */
 const LEAD_TRUST_WAIT_MS = 2000;
-async function projectsWithin(ms: number): Promise<Project[] | null> {
+/**
+ * Which agent a lead runs as is main's answer, like its trust (ADR 0015): replayed
+ * args lose any agent-defining flag they carry. The rules are in leadAgentOf; this
+ * only checks the folder and logs.
+ */
+async function leadAgentFor(leadId: string, cwd: string, trusted: boolean, snapshot: ProjectsSnapshot | null): Promise<MainAgent> {
+  const project = leadProjectOf(leadId, snapshot);
+  const folder = project ? await roomWiring.resolveProjectCwd(project.path) : null;
+  const cwdIsProject = !!folder && await roomWiring.stillLeadFolder(cwd, folder);
+  const { agent, held } = leadAgentOf({ snapshot, project, cwdIsProject, trusted });
+  if (held && held !== 'no-project' && project?.mainAgent) console.error(`[room] ${leadId} starts without its room agent: ${held}`);
+  if (held === 'late') console.error(`[room] project list late for ${leadId}; lead starts without a room agent`);
+  if (agent.source === 'room-missing' || agent.source === 'room-ambiguous') {
+    console.error(`[room] lead agent ${agent.scope}:${agent.file} of ${leadId} is ${agent.source === 'room-missing' ? 'gone' : 'ambiguous'}; starting without it`);
+  }
+  return agent;
+}
+async function snapshotWithin(ms: number): Promise<ProjectsSnapshot | null> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
   try {
-    return await Promise.race([projectService.current().then((s) => s.projects), late]);
+    return await Promise.race([projectService.current(), late]);
   } finally {
     clearTimeout(timer);
   }

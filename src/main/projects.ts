@@ -15,6 +15,7 @@ import { isAbsolute, join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { mapLimit } from '../shared/mapLimit';
 import { AGENT_HEAD_BYTES, MAX_AGENT_FILES, agentDefinitionsFrom, agentNameOfFile, type AgentFileHead } from '../shared/agentDefinition';
+import { MAX_SETTINGS_BYTES, choosableGlobalAgents, isMainAgentRef, settingsAgentFrom } from '../shared/mainAgent';
 import {
   emptyProjectsFile,
   isCandidateFolder,
@@ -154,6 +155,20 @@ export class ProjectService {
     return { ok: true, snapshot: this.publish({ ...rest, projects: mergeProjects(this.folders, next) }) };
   }
 
+  /**
+   * The room's lead agent (ADR 0015). A choice must name a definition listed now,
+   * and a global one must not be shadowed by a project agent of the same name.
+   */
+  setMainAgent(id: unknown, ref: unknown): ProjectResult {
+    if (ref === null) return this.patch(id, { mainAgent: null });
+    if (!isMainAgentRef(ref)) return { ok: false, error: 'invalid agent' };
+    const project = this.last.projects.find((p) => p.id === id);
+    if (!project) return { ok: false, error: 'unknown project' };
+    const list = ref.scope === 'project' ? project.agents : choosableGlobalAgents(project, this.last.globalAgents);
+    if (!list.some((a) => a.file === ref.file)) return { ok: false, error: 'unknown agent' };
+    return this.patch(id, { mainAgent: { scope: ref.scope, file: ref.file } });
+  }
+
   private async scanAndPublish(): Promise<ProjectsSnapshot> {
     const globalAgents = agentDefinitionsFrom(await agentHeads(this.deps.globalAgentsDir));
     const root = this.deps.workspaceRoot();
@@ -242,25 +257,71 @@ export async function readWorkspace(
       isSymlink: entry.isSymbolicLink(),
       isGitRepo: false,
       claudeMd: null,
-      agentFiles: []
+      agentFiles: [],
+      settingsAgent: null,
+      agentsListedFully: true
     };
     if (!isCandidateFolder(base.name, base.isDirectory, base.isSymlink)) return base;
     if (!(await exists(join(path, '.git')))) return base;
+    const claudeDir = join(path, '.claude');
+    // A linked `.claude` would send these reads, and the panel's open and trash, out of the repo (ADR 0015).
+    const claudeState = await folderState(claudeDir);
+    const claudeReal = claudeState === 'real';
     return {
       ...base,
       isGitRepo: true,
-      claudeMd: (await readSmallText(join(path, 'CLAUDE.md'))) ?? (await readSmallText(join(path, '.claude', 'CLAUDE.md'))),
-      agentFiles: await agentHeads(join(path, '.claude', 'agents'))
+      claudeMd: (await readSmallText(join(path, 'CLAUDE.md'))) ?? (claudeReal ? await readSmallText(join(claudeDir, 'CLAUDE.md')) : null),
+      agentFiles: claudeReal ? await agentHeads(join(claudeDir, 'agents')) : [],
+      settingsAgent: claudeReal ? await settingsAgentOf(claudeDir) : null,
+      agentsListedFully: claudeState === 'absent' || (claudeReal && (await agentsFolderListedFully(join(claudeDir, 'agents'))))
     };
   });
   return { ok: true, folders };
 }
 
+/** A real folder, absent, or anything else (a link, a junction, a file, unreadable). */
+async function folderState(path: string): Promise<'real' | 'absent' | 'other'> {
+  try {
+    return (await lstat(path)).isDirectory() ? 'real' : 'other';
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'other';
+  }
+}
+
+/**
+ * Whether `agentHeads` saw everything Claude could load from this folder (ADR 0015):
+ * no subfolder or link, every `.md` name valid, and no more than the cap.
+ */
+async function agentsFolderListedFully(dir: string): Promise<boolean> {
+  const state = await folderState(dir);
+  if (state !== 'real') return state === 'absent';
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    if (entries.some((e) => !e.isFile())) return false;
+    const md = entries.filter((e) => e.name.toLowerCase().endsWith('.md'));
+    return md.length <= MAX_AGENT_FILES && md.every((e) => agentNameOfFile(e.name) !== null);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The repo's `agent` setting (ADR 0015), in Claude's order: the local file wins
+ * over the shared one when it names an agent.
+ */
+async function settingsAgentOf(claudeDir: string): Promise<string | null> {
+  for (const name of ['settings.local.json', 'settings.json']) {
+    const agent = settingsAgentFrom(await readSmallText(join(claudeDir, name), MAX_SETTINGS_BYTES));
+    if (agent) return agent;
+  }
+  return null;
+}
+
 /** A plain file (not a link) under the size cap, or null. */
-async function readSmallText(path: string): Promise<string | null> {
+async function readSmallText(path: string, maxBytes = MAX_CLAUDE_MD_BYTES): Promise<string | null> {
   try {
     const info = await lstat(path);
-    if (!info.isFile() || info.size > MAX_CLAUDE_MD_BYTES) return null;
+    if (!info.isFile() || info.size > maxBytes) return null;
     return await readFile(path, 'utf8');
   } catch {
     return null;
@@ -367,6 +428,7 @@ export function registerProjectsIpc(service: ProjectService): void {
   // null returns the room's ZetaHub section to auto (shown when the project has a key).
   ipcMain.handle('projects:setShowZetahub', (_evt, id: unknown, show: unknown): ProjectResult =>
     typeof show === 'boolean' || show === null ? service.patch(id, { showZetahub: show }) : { ok: false, error: 'invalid value' });
+  ipcMain.handle('projects:setMainAgent', (_evt, id: unknown, ref: unknown): ProjectResult => service.setMainAgent(id, ref));
   ipcMain.handle('projects:setZetahubKey', (_evt, id: unknown, key: unknown): ProjectResult => {
     const normalized = normalizeZetahubKey(key);
     return normalized.ok ? service.patch(id, { zetahubKey: normalized.key }) : { ok: false, error: 'invalid ZetaHub key' };
