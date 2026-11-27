@@ -147,7 +147,7 @@ export function nextRoomTopHeight(startHeight: number, dragPx: number, panelHeig
   return Math.round(Math.min(max, Math.max(0, startHeight + dragPx)));
 }
 
-/** The card the person opened in the ticket details dialog (ADR 0010). */
+/** The card the person opened in the ticket details dialog (ADR 0016). */
 export type TicketDetail = { kind: 'zetahub'; row: ZetahubRow } | { kind: 'local'; item: LocalItem };
 
 /**

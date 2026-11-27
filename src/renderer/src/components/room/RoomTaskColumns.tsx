@@ -26,7 +26,7 @@ const ACCENTS: Record<string, string> = {
 export function RoomTaskColumns({ tickets, errorKey, onUseKey }: {
   tickets: RoomTickets | null;
   errorKey: string | null;
-  /** Saves a key the repo's CLAUDE.md suggested as the person's own (ADR 0010). */
+  /** Saves a key the repo's CLAUDE.md suggested as the person's own (ADR 0016). */
   onUseKey: (key: string) => void;
 }) {
   const { t, i18n } = useTranslation();

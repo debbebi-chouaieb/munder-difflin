@@ -170,7 +170,7 @@ export function RoomCapDialog({ cap, closeName, onConfirm, onCancel }: {
 type CopyState = 'idle' | 'copied' | 'failed';
 
 /**
- * A room card opened in full (ADR 0010): read only, built from the cache row or
+ * A room card opened in full (ADR 0016): read only, built from the cache row or
  * the local bullet the room already holds. Ticket text can be written by any
  * ZetaHub user and local items by anyone with the repo, so every value is plain
  * text in its own direction (`dir="auto"`); keys and times are isolated.

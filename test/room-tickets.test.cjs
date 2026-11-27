@@ -213,7 +213,7 @@ test('room tickets: a hidden ZetaHub section reads no cache; auto follows the ke
   assert.equal(forced.zetahub.reason, 'no-key', 'turned on without a key: the hint says why it is empty');
 });
 
-test('room tickets: a key from CLAUDE.md is a suggestion and reads no cache (ADR 0010)', async () => {
+test('room tickets: a key from CLAUDE.md is a suggestion and reads no cache (ADR 0016)', async () => {
   const dir = cache();
   const { dir: proj } = project();
   const base = { path: proj, zetahubKey: 'MCX-ANDR', localWorkPath: 'docs/open.md', showZetahub: null };
@@ -237,7 +237,7 @@ test('room tickets: a suggested key never touches the cache folder', async () =>
   assert.equal(res.zetahub.reason, 'suggested', 'not no-cache: the cache was not looked at');
 });
 
-test('rows: parent key comes from the same file, closed parents included; updated time is cleaned (ADR 0010)', () => {
+test('rows: parent key comes from the same file, closed parents included; updated time is cleaned (ADR 0016)', () => {
   const tasks = [
     line({ id: 'p-done', key: 'MDM--1', title: 'epic', status: 'Done' }),
     line({ id: 'p-open', key: 'MDM--2', title: 'story', status: 'To Do' }),

@@ -44,7 +44,7 @@ export async function readRoomTickets(project: TicketProject, log: Log, cacheDir
 }
 
 /**
- * A key named by the repo's own CLAUDE.md is only a suggestion (ADR 0010): a repo
+ * A key named by the repo's own CLAUDE.md is only a suggestion (ADR 0016): a repo
  * must not choose which project's cached tickets its room shows. Nothing is read
  * until the person saves the key as their own.
  */

@@ -1,4 +1,4 @@
-# 0010. A CLAUDE.md ZetaHub key is a suggestion; room tickets open a details dialog
+# 0016. A CLAUDE.md ZetaHub key is a suggestion; room tickets open a details dialog
 
 - **Status**: Accepted
 - **Date**: 2026-11-25

@@ -355,7 +355,7 @@ test('the ZetaHub section is left out when main hid it', () => {
   assert.match(read(`${ROOM_DIR}/RoomPanel.tsx`), /\[reload, projectShown, showZetahub, zetahubKeyState\]/, 'a toggle or a key change re-reads the tickets');
 });
 
-test('a suggested ZetaHub key shows a prompt and no board count (ADR 0010)', () => {
+test('a suggested ZetaHub key shows a prompt and no board count (ADR 0016)', () => {
   assert.match(read(`${ROOM_DIR}/RoomTaskColumns.tsx`), /reason === 'suggested'/);
   const suggested = { zetahub: { ok: false, key: 'MDM', reason: 'suggested' }, local: { ok: true, path: 'x', items: [], total: 2 } };
   assert.deepEqual(counts.boardCounts(suggested), { zetahub: null, local: 2 });
@@ -376,7 +376,7 @@ test('room store: hiding the lists remembers their height; showing restores it',
   assert.equal(st().topHeight, 260, 'dragged shut: show returns to the last open height');
 });
 
-// ── ticket details (ADR 0010) ────────────────────────────────────────────────
+// ── ticket details (ADR 0016) ────────────────────────────────────────────────
 
 const ROW = {
   key: 'MDM-7', title: 'Fix it', type: 'Task', status: 'To Do', priority: '', assignee: 'Ana',
