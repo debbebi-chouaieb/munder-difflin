@@ -1435,6 +1435,7 @@
     "deskTitle": "Agent from the project. Started when needed.",
     "noAgents": "No agents defined in .claude/agents.",
     "techLeadTitle": "Global agent from ~/.claude/agents. Started when needed.",
+    "trashLeadRooms": "Rooms whose lead runs as this agent: {{count}}. After this, their leads start without it.",
     "subagentRunning": "Running now as a subagent.",
     "keyInvalid": "Use capitals and digits, with at most one dash, like MDM or MCX-ANDR.",
     "errors": {

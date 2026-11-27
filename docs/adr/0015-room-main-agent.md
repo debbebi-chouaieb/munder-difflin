@@ -4,7 +4,7 @@
 - **Date**: 2026-11-26
 - **Scope**: `StoredProject` / `Project` in `src/shared/project.ts`, a new `src/shared/mainAgent.ts`, the project
   scan (`src/main/projects.ts`), the lead spawn in `spawnAgentCore` (`src/main/index.ts`), a new
-  `src/main/agentFiles.ts`, the room panel's agent list. Extends ADR 0003 and ADR 0009.
+  `src/main/agentFiles.ts`, the room panel's agent list and the sidebar's Tech leads. Extends ADR 0003, 0009 and 0013.
 
 ## Context
 A room's lead (ADR 0003) is always plain `claude` plus the hive protocol, with the role `lead`. Many projects already
@@ -77,4 +77,6 @@ repos and frontmatter validation on save.
 - The lead's role in the hive stays `lead`; its persona comes from the agent file.
 - A trashed agent can be restored from the OS trash. A room choice that pointed at it shows as missing until changed.
 - Same residual as ADR 0009: between the `lstat` and the open or trash, a file can be swapped for a link.
-- Creating agents and Open/Remove for global agents in the sidebar are left for later.
+- The sidebar's Tech leads rows (global agents, ADR 0013) get the same Open and Remove (amended 2026-11-27). Their
+  trash warning counts the rooms whose lead chose that agent.
+- Creating agents is left for later.

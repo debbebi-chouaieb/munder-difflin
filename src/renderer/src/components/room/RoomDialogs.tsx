@@ -230,10 +230,10 @@ export function TicketDetailsDialog({ detail, onClose }: { detail: TicketDetail;
 }
 
 /** Before an agent file goes to the trash (ADR 0015). The name is a checked agent name. */
-export function RoomTrashAgentDialog({ name, isLead, onConfirm, onCancel }: {
+export function RoomTrashAgentDialog({ name, leadNote, onConfirm, onCancel }: {
   name: string;
-  /** The room's lead runs as this agent. */
-  isLead: boolean;
+  /** A translated warning when a lead runs as this agent, else null. */
+  leadNote: string | null;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
@@ -250,7 +250,7 @@ export function RoomTrashAgentDialog({ name, isLead, onConfirm, onCancel }: {
       )}
     >
       <p style={{ margin: 0 }}>{t('room.agents.trashBody', { name })}</p>
-      {isLead && <p style={{ ...warning, marginTop: 8 }}>{t('room.agents.trashLead')}</p>}
+      {leadNote && <p style={{ ...warning, marginTop: 8 }}>{leadNote}</p>}
     </Dialog>
   );
 }

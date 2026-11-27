@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import type { AgentDefinition, AgentFileResult } from '@shared/agentDefinition';
+import type { AgentDefinition } from '@shared/agentDefinition';
 import type { Project } from '@shared/project';
 import { useProjects } from '@/store/projects';
 import { PixelButton } from '../PixelButton';
 import { RoomTrashAgentDialog } from './RoomDialogs';
 import { heading, muted, warning } from './roomStyles';
 import { isLeadRow, leadOptions, leadRefOf, leadStatus, leadValueOf } from './roomAgentModel';
+import { useAgentFileActions } from './useAgentFileActions';
 
 const selectStyle = {
   padding: '3px 6px', background: 'var(--cth-paper-100)',
@@ -31,28 +32,14 @@ export function RoomAgentList({ project, leadRunning, onNotice }: {
   const globalAgents = useProjects((s) => s.snapshot.globalAgents);
   const setMainAgent = useProjects((s) => s.setMainAgent);
   const [trashing, setTrashing] = useState<AgentDefinition | null>(null);
-  const [busy, setBusy] = useState(false);
+  const files = useAgentFileActions('project', project.id, onNotice);
 
   const options = leadOptions(project, globalAgents);
   const status = leadStatus(project, globalAgents, leadRunning);
 
-  const run = async (action: () => Promise<AgentFileResult>, failedKey: string) => {
-    setBusy(true);
-    try {
-      const res = await action();
-      if (!res.ok) onNotice(`room.agents.errors.${res.error}`);
-    } catch (e) {
-      // The IPC itself failed (main gone, handler threw): main logged nothing, so log here.
-      console.error('[room] agent file action failed:', e);
-      onNotice(failedKey);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const trash = (def: AgentDefinition) => {
     setTrashing(null);
-    void run(() => window.cth.trashAgentFile('project', project.id, def.file), 'room.agents.errors.trash-failed');
+    void files.trash(def.file);
   };
 
   return (
@@ -90,11 +77,10 @@ export function RoomAgentList({ project, leadRunning, onNotice }: {
               </span>
               {isLeadRow(status.agent, a) && <span style={{ ...muted, flexShrink: 0 }}>{t('room.agents.leadBadge')}</span>}
               {a.model && <span style={{ ...muted, flexShrink: 0 }}><bdi>{a.model}</bdi></span>}
-              <PixelButton size="sm" variant="ghost" disabled={busy} title={t('room.agents.openTitle')}
-                onClick={() => void run(() => window.cth.openAgentFile('project', project.id, a.file), 'room.agents.errors.open-failed')}>
+              <PixelButton size="sm" variant="ghost" disabled={files.busy} title={t('room.agents.openTitle')} onClick={() => void files.open(a.file)}>
                 {t('room.agents.open')}
               </PixelButton>
-              <PixelButton size="sm" variant="ghost" disabled={busy} title={t('room.agents.trashTitle')} onClick={() => setTrashing(a)}>
+              <PixelButton size="sm" variant="ghost" disabled={files.busy} title={t('room.agents.trashTitle')} onClick={() => setTrashing(a)}>
                 {t('room.agents.trash')}
               </PixelButton>
             </li>
@@ -104,7 +90,7 @@ export function RoomAgentList({ project, leadRunning, onNotice }: {
       {trashing && (
         <RoomTrashAgentDialog
           name={trashing.name}
-          isLead={isLeadRow(status.agent, trashing)}
+          leadNote={isLeadRow(status.agent, trashing) ? t('room.agents.trashLead') : null}
           onConfirm={() => trash(trashing)}
           onCancel={() => setTrashing(null)}
         />

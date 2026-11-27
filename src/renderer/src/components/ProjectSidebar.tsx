@@ -10,7 +10,8 @@ import { useSubagents } from '@/store/subagents';
 import { PixelPanel } from '@/components/PixelPanel';
 import { PixelButton } from '@/components/PixelButton';
 import { Icon } from '@/components/Icon';
-import { ProjectRow, runningText } from '@/components/ProjectRow';
+import { ProjectRow } from '@/components/ProjectRow';
+import { TechLeadList } from '@/components/TechLeadList';
 
 /**
  * Left project menu (ADR 0001, Phase 2): the CEO, the tech leads (global
@@ -117,22 +118,7 @@ function ExpandedSidebar({ width, onHide }: { width: number; onHide: () => void 
           {snapshot.globalAgents.length === 0 ? (
             <span style={muted}>{t('projectSidebar.techLeadsEmpty')}</span>
           ) : (
-            <ul style={{ margin: 0, padding: 0 }}>
-              {snapshot.globalAgents.map((agent) => {
-                const isRunning = active.globals.has(agent.file);
-                const about = agent.description ?? t('projectSidebar.techLeadTitle');
-                return (
-                  <li
-                    key={agent.file}
-                    style={{ ...muted, listStyle: 'none', ...(isRunning ? runningText : {}) }}
-                    title={isRunning ? `${t('projectSidebar.subagentRunning')} ${about}` : about}
-                  >
-                    <span aria-hidden="true">{isRunning ? '● ' : '○ '}</span><span dir="auto">{agent.name}</span>
-                    {agent.model && <> · <bdi>{agent.model}</bdi></>}
-                  </li>
-                );
-              })}
-            </ul>
+            <TechLeadList agents={snapshot.globalAgents} running={active.globals} muted={muted} />
           )}
         </Section>
 

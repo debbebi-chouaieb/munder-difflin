@@ -128,8 +128,34 @@ test('every lead and agent-file string exists in every locale', () => {
   ];
   const errors = ['invalid-request', 'unknown-agent', 'not-a-file', 'open-failed', 'trash-failed'];
   for (const file of fs.readdirSync(dir).filter((f) => f.endsWith('.json'))) {
-    const agents = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8')).room.agents;
+    const locale = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'));
+    const agents = locale.room.agents;
     for (const key of keys) assert.equal(typeof agents[key], 'string', `${file} room.agents.${key}`);
     for (const code of errors) assert.equal(typeof agents.errors?.[code], 'string', `${file} room.agents.errors.${code}`);
+    assert.match(locale.projectSidebar.trashLeadRooms, /\{\{count\}\}/, `${file} projectSidebar.trashLeadRooms`);
   }
+});
+
+test('sidebar trash warning counts the rooms that chose this global agent as lead', () => {
+  const projects = [
+    { mainAgent: { scope: 'global', file: 'reviewer' } },
+    { mainAgent: { scope: 'global', file: 'reviewer' } },
+    { mainAgent: { scope: 'project', file: 'reviewer' } },
+    { mainAgent: { scope: 'global', file: 'planner' } },
+    { mainAgent: null }
+  ];
+  assert.equal(model.roomsLedByGlobal(projects, 'reviewer'), 2, 'a project agent with the same key is another file');
+  assert.equal(model.roomsLedByGlobal(projects, 'tester'), 0);
+});
+
+test('sidebar Tech leads: rows open and trash global files through the shared actions (ADR 0015)', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
+  assert.match(read('src/renderer/src/components/ProjectSidebar.tsx'), /<TechLeadList agents=\{snapshot\.globalAgents\} running=\{active\.globals\}/);
+  const list = read('src/renderer/src/components/TechLeadList.tsx');
+  assert.match(list, /useAgentFileActions\('global', null, setNotice\)/, 'global scope, no project id');
+  assert.match(list, /<RoomTrashAgentDialog/, 'trash asks first');
+  assert.doesNotMatch(list, /window\.cth\.trashAgentFile/, 'no path around the shared actions');
+  assert.match(read('src/renderer/src/components/room/RoomAgentList.tsx'), /useAgentFileActions\('project', project\.id, onNotice\)/);
 });

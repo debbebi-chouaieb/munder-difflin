@@ -74,6 +74,14 @@ export function leadStatus(project: LeadProject, globalAgents: AgentDefinition[]
   };
 }
 
+/**
+ * How many rooms chose this global agent as their lead (ADR 0015), so trashing it
+ * from the sidebar can warn that those leads will start without it.
+ */
+export function roomsLedByGlobal(projects: Pick<Project, 'mainAgent'>[], file: string): number {
+  return projects.filter((p) => p.mainAgent?.scope === 'global' && p.mainAgent.file === file).length;
+}
+
 /** Whether this project agent is the one the room's lead runs as, by room choice or by the repo setting. */
 export function isLeadRow(agent: MainAgent, def: AgentDefinition): boolean {
   if (agent.source === 'room') return agent.scope === 'project' && agent.file === def.file;
