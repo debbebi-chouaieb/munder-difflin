@@ -9,6 +9,7 @@ import { samePath, trustedRootFrom, type Project, type StoredProjectPatch } from
 import { leadAgentIdFor } from '../shared/roomLead';
 import { claudeTrustCovers, claudeTrustsExactly, projectMcpConfigNear, trustPromptExpected } from '../shared/claudeTrust';
 import { resolveAllowedRoot } from './rootGuard';
+import { createLeadLock, type LeadLock } from './leadLock';
 
 export const CLAUDE_CONFIG_MAX_BYTES = 32 * 1024 * 1024;
 
@@ -82,6 +83,8 @@ export interface RoomWiring {
   /** Tells the lead's window to archive its card; the renderer ignores an unknown id. */
   archiveLeadCard: (agentId: string) => void;
   announceLead: (id: string, name: string, cwd: string, target: WebContents | null) => void;
+  /** Who may open, spawn or forget a lead right now (ADR 0017). */
+  leadLock: LeadLock;
 }
 
 export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
@@ -193,6 +196,7 @@ export function createRoomWiring(deps: RoomWiringDeps): RoomWiring {
   };
 
   return {
+    leadLock: createLeadLock(),
     readClaudeConfig,
 
     async claudeTrustsFolder(cwd) {

@@ -16,6 +16,7 @@ import {
 } from '../shared/roomLead';
 import type { SessionSummary } from '../shared/sessionList';
 import type { RoomTickets } from '../shared/ticketSources';
+import type { LeadLock } from './leadLock';
 
 export interface RoomDeps {
   projects: () => Promise<Project[]>;
@@ -54,6 +55,8 @@ export interface RoomDeps {
   leadLastUsed: (agentId: string) => number;
   /** Removes the lead's card from the window; harmless when it is already gone. */
   archiveLead: (agentId: string) => void;
+  /** Shared with main's `pty:spawn`, so a restored lead and a forget never overlap (ADR 0017). */
+  leadLock: LeadLock;
   log: (line: string) => void;
 }
 
@@ -73,9 +76,6 @@ export interface RoomHandlers {
 export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
   // One open per room at a time; a second click shares the first one's result.
   const opening = new Map<string, { request: OpenRequest; result: Promise<OpenTerminalResult>; sender: WebContents | null }>();
-  // Rooms whose "Forget trust" runs. Only opens and forgets check it: a close never reads
-  // trust, and main's own revokes run inside an open, which a forget already refuses.
-  const forgetting = new Set<string>();
 
   /** Rooms exist for enabled projects only; closing also works after a project is disabled. */
   const findProject = async (projectId: unknown, enabledOnly: boolean): Promise<Project | null> => {
@@ -199,7 +199,10 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         deps.announceLead(agentId, `${project.name} lead`, (await deps.resolveProjectCwd(project.path)) ?? project.path, sender);
         return { ok: true, agentId, alreadyRunning: true, untrusted: !project.trusted };
       }
-      if (forgetting.has(project.id)) return { ok: false, error: 'busy' };
+      // A forget or a pty spawn of this lead holds it. Only opens, spawns and forgets take
+      // the lock: a close never reads trust, and main's own revokes run inside an open.
+      const held = deps.leadLock.holder(agentId);
+      if (held === 'forget' || held === 'spawn') return { ok: false, error: 'busy' };
       const pending = opening.get(project.id);
       // A double click shares the open; a different request waits for the person to retry.
       if (pending) {
@@ -211,7 +214,9 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         }
         return shared;
       }
-      const result = open(project, parsed, sender).catch((e): OpenTerminalResult => {
+      const locked = deps.leadLock.run(agentId, 'open', () => open(project, parsed, sender));
+      if (!locked) return { ok: false, error: 'busy' };
+      const result = locked.catch((e): OpenTerminalResult => {
         deps.log(`[room] open terminal failed for ${project.id}: ${errText(e)}`);
         return { ok: false, error: 'spawn-failed' };
       }).finally(() => opening.delete(project.id));
@@ -246,24 +251,24 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       if (!project) return { ok: false, error: 'unknown-project' };
       // A running lead already loaded the folder's hooks and MCP servers, and its
       // hook gate reads trust on every hook: the person stops it first.
-      if (forgetting.has(project.id) || opening.has(project.id) || deps.isRunning(leadAgentIdFor(project))) {
-        return { ok: false, error: 'busy' };
-      }
+      // A held lead is being opened, spawned through pty:spawn or forgotten (ADR 0017).
+      const agentId = leadAgentIdFor(project);
+      if (deps.leadLock.holder(agentId) !== null || deps.isRunning(agentId)) return { ok: false, error: 'busy' };
       // Nothing of ours to drop. Claude's own trust for the folder may be the person's, so it stays.
       if (!project.trusted) return { ok: true, done: true };
-      forgetting.add(project.id);
-      try {
-        const cwd = await deps.resolveProjectCwd(project.path);
-        // A part not saved leaves the project trusted: the button stays and the person retries.
-        if (!(await deps.forgetTrust(project, cwd))) return { ok: false, error: 'forget-failed' };
-        deps.log(`[room] trust for ${project.id} forgotten`);
-        return { ok: true, done: true };
-      } catch (e) {
-        deps.log(`[room] forget trust failed for ${project.id}: ${errText(e)}`);
-        return { ok: false, error: 'forget-failed' };
-      } finally {
-        forgetting.delete(project.id);
-      }
+      const forgotten = deps.leadLock.run(agentId, 'forget', async (): Promise<RoomDone> => {
+        try {
+          const cwd = await deps.resolveProjectCwd(project.path);
+          // A part not saved leaves the project trusted: the button stays and the person retries.
+          if (!(await deps.forgetTrust(project, cwd))) return { ok: false, error: 'forget-failed' };
+          deps.log(`[room] trust for ${project.id} forgotten`);
+          return { ok: true, done: true };
+        } catch (e) {
+          deps.log(`[room] forget trust failed for ${project.id}: ${errText(e)}`);
+          return { ok: false, error: 'forget-failed' };
+        }
+      });
+      return forgotten ?? { ok: false, error: 'busy' };
     }
   };
 }

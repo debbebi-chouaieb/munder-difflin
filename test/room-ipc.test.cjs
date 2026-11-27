@@ -13,6 +13,7 @@ const loadTs = require('./load-ts.cjs');
 const { buildLeadSpawn, leadAgentIdFor, parseOpenRequest, spawnPosture, leadIdOfSpawn, isLeadAgentId, withoutClaudeBypassArgs } = loadTs('src/shared/roomLead.ts');
 const { claudeTrustCovers, claudeTrustsExactly, trustPromptExpected, projectMcpConfigNear, mcpConfigCandidates, TrustPromptGate, hookProvesTurn } = loadTs('src/shared/claudeTrust.ts');
 const { createRoomHandlers } = loadTs('src/main/roomIpc.ts');
+const { createLeadLock, spawnUnderLeadLock, LEAD_BUSY_ERROR } = loadTs('src/main/leadLock.ts');
 
 const ABC = '00000000-0000-4000-8000-000000000abc';
 const BIG = '00000000-0000-4000-8000-000000000b19';
@@ -51,6 +52,7 @@ function deps(over = {}) {
     roomPtyCap: () => over.cap ?? 3,
     touchLead: (id) => { calls.touch.push(id); },
     leadLastUsed: (id) => over.lastUsed?.[id] ?? 0,
+    leadLock: over.leadLock ?? createLeadLock(),
     log: (m) => calls.log.push(m)
   };
   return { d, calls };
@@ -534,6 +536,71 @@ test('forget trust: an open while trust is being dropped waits for the person to
   assert.deepEqual(await forgetting, { ok: true, done: true });
 });
 
+// ADR 0017: Restore team and a card restart reach the lead through pty:spawn, outside the room handlers.
+test('forget trust: a pty spawn of the lead during the forget is refused and starts nothing', async () => {
+  const { d, calls } = deps();
+  let release;
+  d.forgetTrust = (p, cwd) => new Promise((resolve) => { calls.forget.push([p.id, cwd]); release = () => resolve(true); });
+  const h = createRoomHandlers(d);
+  const forgetting = h.forgetTrust('app');
+  await new Promise((r) => setImmediate(r));
+  let spawned = false;
+  const res = await spawnUnderLeadLock(d.leadLock, { id: 'lead--app', hiveId: 'lead--app' }, async () => { spawned = true; return { ok: true }; });
+  assert.deepEqual(res, { ok: false, error: LEAD_BUSY_ERROR });
+  assert.equal(spawned, false);
+  release();
+  assert.deepEqual(await forgetting, { ok: true, done: true });
+  assert.equal(d.leadLock.holder('lead--app'), null);
+});
+
+test('forget trust: refused while a pty spawn of the lead runs, nothing dropped', async () => {
+  const { d, calls } = deps();
+  let release;
+  const spawning = spawnUnderLeadLock(d.leadLock, { id: 'lead--app', hiveId: 'lead--app' }, () => new Promise((resolve) => { release = () => resolve({ ok: true }); }));
+  assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: false, error: 'busy' });
+  assert.deepEqual(calls.forget, []);
+  release();
+  await spawning;
+});
+
+test('open: busy while a pty spawn of the lead runs, no second process', async () => {
+  const { d, calls } = deps();
+  let release;
+  const spawning = spawnUnderLeadLock(d.leadLock, { id: 'lead--app', hiveId: 'lead--app' }, () => new Promise((resolve) => { release = () => resolve({ ok: true }); }));
+  assert.deepEqual(await createRoomHandlers(d).openTerminal('app', null, null), { ok: false, error: 'busy' });
+  assert.equal(calls.spawn.length, 0);
+  release();
+  await spawning;
+});
+
+test('open: holds the lead while it spawns and frees it after, also when the spawn throws', async () => {
+  const { d } = deps();
+  let release;
+  d.spawnLead = () => new Promise((resolve) => { release = () => resolve({ ok: true }); });
+  const h = createRoomHandlers(d);
+  const opening = h.openTerminal('app', null, null);
+  await new Promise((r) => setImmediate(r));
+  assert.equal(d.leadLock.holder('lead--app'), 'open');
+  release();
+  assert.equal((await opening).ok, true);
+  assert.equal(d.leadLock.holder('lead--app'), null);
+
+  const { d: d2 } = deps();
+  d2.spawnLead = async () => { throw new Error('EAGAIN'); };
+  assert.deepEqual(await createRoomHandlers(d2).openTerminal('app', null, null), { ok: false, error: 'spawn-failed' });
+  assert.equal(d2.leadLock.holder('lead--app'), null);
+});
+
+test('forget trust: frees the lead after a failed or throwing forget', async () => {
+  const { d } = deps({ forgetOk: false });
+  const h = createRoomHandlers(d);
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'forget-failed' });
+  assert.equal(d.leadLock.holder('lead--app'), null);
+  d.forgetTrust = async () => { throw new Error('EBUSY'); };
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'forget-failed' });
+  assert.equal(d.leadLock.holder('lead--app'), null);
+});
+
 test('forget trust: an untrusted project leaves Claude\'s own folder trust alone', async () => {
   const { d, calls } = deps({ project: { trusted: false } });
   assert.deepEqual(await createRoomHandlers(d).forgetTrust('app'), { ok: true, done: true });
@@ -701,6 +768,26 @@ test('close: the idle re-check runs right before the kill; false leaves the lead
   assert.deepEqual(calls.kill, []);
   assert.deepEqual(await h.closeTerminal('app', () => true), { ok: true, done: true });
   assert.deepEqual(calls.kill, ['lead--app']);
+});
+
+// ADR 0017: every main door that can start a lead shares the room's lock; the room open's own spawn does not lock twice.
+test('wiring: every spawn core call that can start a lead holds the lead lock', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
+  // The room open already holds `open` when it spawns; a worker id is never a lead id.
+  const exempt = new Set(['{ ...opts, hive: { ...opts.hive } }, owner', 'spawnOpts, liveWebContents()']);
+  const calls = [];
+  for (const m of src.matchAll(/spawnAgentCore\(((?:[^()\n]|\([^()\n]*\))*)\)/g)) {
+    const args = m[1];
+    if (args.startsWith('opts: AgentSpawnOptions')) continue;
+    calls.push(args);
+    if (exempt.has(args)) continue;
+    // The lock and the call it guards sit within a few lines of each other.
+    const before = src.slice(Math.max(0, m.index - 200), m.index);
+    assert.ok(before.includes('spawnUnderLeadLock(roomWiring.leadLock, '), `spawnAgentCore(${args}) is not behind the lead lock`);
+  }
+  // A new call fails here until someone decides whether it can start a lead.
+  assert.equal(calls.length, 5, `spawn core calls: ${calls.join(' | ')}`);
+  assert.match(src, /leadLock: roomWiring\.leadLock,/);
 });
 
 test('wiring: room:closeTerminal from IPC never passes a guard', () => {
