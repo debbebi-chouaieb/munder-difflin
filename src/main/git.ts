@@ -1,12 +1,18 @@
 import { spawn } from 'node:child_process';
 import { openForRead, safeResolve } from './fs';
 
+/**
+ * Turned off on every call: a repo's own `core.fsmonitor` names a command that
+ * status, diff and worktree calls would run, and these repos are not all trusted.
+ */
+const NO_REPO_FSMONITOR = ['-c', 'core.fsmonitor=false'];
+
 /** Run git in `cwd` with `args`. Returns stdout text or an error. */
 function runGit(cwd: string, args: string[], timeoutMs = 8000): Promise<{
   ok: true; stdout: string;
 } | { ok: false; error: string }> {
   return new Promise((resolve) => {
-    const proc = spawn('git', args, { cwd });
+    const proc = spawn('git', [...NO_REPO_FSMONITOR, ...args], { cwd });
     let stdout = '';
     let stderr = '';
     const timer = setTimeout(() => {
@@ -155,7 +161,7 @@ export async function getAheadBehind(cwd: string): Promise<GitAheadBehind | { er
  * hooks settings are turned off for this call.
  */
 export async function rootCommitsOutput(cwd: string): Promise<string | null> {
-  const res = await runGit(cwd, ['-c', 'core.fsmonitor=false', '-c', 'core.hooksPath=', 'rev-list', '--max-parents=0', 'HEAD'], 5000);
+  const res = await runGit(cwd, ['-c', 'core.hooksPath=', 'rev-list', '--max-parents=0', 'HEAD'], 5000);
   return res.ok ? res.stdout : null;
 }
 
@@ -354,7 +360,8 @@ export async function worktreeIsGcSafe(
   }
   // (2b) base tree identical to HEAD tree (squash-merge / equivalent content)?
   // `git diff --quiet <base> HEAD` → exit 0 (ok) means NO differences.
-  const diff = await runGit(wtPath, ['diff', '--quiet', baseBranch, 'HEAD']);
+  // A repo's external diff or textconv driver is a command too.
+  const diff = await runGit(wtPath, ['diff', '--quiet', '--no-ext-diff', '--no-textconv', baseBranch, 'HEAD']);
   if (diff.ok) return { gc: true, detail: `clean + tree identical to ${baseBranch} (integrated/squashed)` };
   // Either there are real un-integrated commits, or a query failed → keep.
   return { gc: false, detail: `clean but content not yet in ${baseBranch}` };

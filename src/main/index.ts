@@ -44,6 +44,7 @@ import { createRoomIdleSweeper } from './roomIdle';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
 import { spawnUnderLeadLock, spawnUnlessLead } from './leadLock';
+import { spawnRequestFromRenderer } from './ptySpawnRequest';
 import type { ProjectsSnapshot, StoredProjectPatch } from '../shared/project';
 import { withLeadAgentArgs, type MainAgent } from '../shared/mainAgent';
 import { listIssues, listCIRuns } from './github';
@@ -2644,10 +2645,10 @@ function spawnFailReason(error?: string): SpawnFailReason {
   return 'spawn_error';
 }
 
-ipcMain.handle('pty:spawn', async (evt, opts: AgentSpawnOptions) => {
-  if (!opts || typeof opts.id !== 'string' || typeof opts.cwd !== 'string' || typeof opts.command !== 'string') {
-    return { ok: false, error: 'invalid SpawnOptions' };
-  }
+ipcMain.handle('pty:spawn', async (evt, raw: unknown) => {
+  // Known fields only: env, shellScript, untrusted and noAutoInstall are main's own.
+  const opts: AgentSpawnOptions | null = spawnRequestFromRenderer(raw);
+  if (!opts) return { ok: false, error: 'invalid SpawnOptions' };
   // Record the spawning window as the PTY's owner so its output routes ONLY back
   // to that floor, then run the shared spawn core.
   const owner = BrowserWindow.fromWebContents(evt.sender)?.webContents ?? null;
