@@ -676,6 +676,9 @@ const api = {
   /** Drops the room's stored trust and Claude's folder trust; refused while its lead runs (ADR 0012). */
   roomForgetTrust: (projectId: string): Promise<RoomDone> =>
     ipcRenderer.invoke('room:forgetTrust', projectId),
+  /** Restore team, card restart and auto-revive of a room lead: main stops it and opens it again on its last session (ADR 0019). */
+  roomRestartLead: (leadId: string): Promise<OpenTerminalResult> =>
+    ipcRenderer.invoke('room:restartLead', leadId),
   /** A room lead's terminal went on or off this window's screen; main stops leads no window shows (ADR 0005). */
   roomLeadShown: (agentId: string, shown: boolean): void =>
     ipcRenderer.send('room:leadShown', agentId, shown),

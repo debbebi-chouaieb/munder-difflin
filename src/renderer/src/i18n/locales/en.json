@@ -1458,6 +1458,8 @@
   "room": {
     "loading": "Loading…",
     "gone": "This project is no longer on the floor.",
+    "leadModelInRoom": "A room lead runs the agent its room picks. Change it in the room.",
+    "restartFailed": "Could not restart: {{reason}} Open its room.",
     "close": "Close room",
     "errors": {
       "unknown-project": "This project is not on the floor any more.",

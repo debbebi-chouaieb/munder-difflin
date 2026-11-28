@@ -43,7 +43,7 @@ import { roomIdleMinutes, roomPtyCap } from '../shared/roomLimits';
 import { createRoomIdleSweeper } from './roomIdle';
 import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
-import { spawnUnderLeadLock } from './leadLock';
+import { spawnUnderLeadLock, spawnUnlessLead } from './leadLock';
 import type { ProjectsSnapshot, StoredProjectPatch } from '../shared/project';
 import { withLeadAgentArgs, type MainAgent } from '../shared/mainAgent';
 import { listIssues, listCIRuns } from './github';
@@ -652,6 +652,7 @@ ptyManager.setExitHandler((id, exitCode, info) => {
       // re-enable input) so the freshly-spawned CLI paints onto a clean, typeable
       // grid, then re-run the normal spawn — which now finds the installed binary.
       const wc = (pending.owner && !pending.owner.isDestroyed()) ? pending.owner : liveWebContents();
+      // These are the options main built for the first spawn (a room open for a lead), so a lead may be replayed here.
       const relaunch: AgentSpawnOptions = { ...pending.opts, noAutoInstall: true };
       // The grid is re-armed only once the lead lock is held (ADR 0017): a busy lead keeps the install output on screen.
       void spawnUnderLeadLock(roomWiring.leadLock, { id: relaunch.id, hiveId: relaunch.hive?.id }, () => {
@@ -2650,8 +2651,8 @@ ipcMain.handle('pty:spawn', async (evt, opts: AgentSpawnOptions) => {
   // Record the spawning window as the PTY's owner so its output routes ONLY back
   // to that floor, then run the shared spawn core.
   const owner = BrowserWindow.fromWebContents(evt.sender)?.webContents ?? null;
-  // Restore team and a card restart start leads here: they share the room's lead lock (ADR 0017).
-  return spawnUnderLeadLock(roomWiring.leadLock, { id: opts.id, hiveId: opts.hive?.id }, () => spawnAgentCore(opts, owner));
+  // The renderer never starts a lead here: room:openTerminal and room:restartLead build it in main (ADR 0019).
+  return spawnUnlessLead({ id: opts.id, hiveId: opts.hive?.id }, () => spawnAgentCore(opts, owner));
 });
 
 /** Core agent-spawn logic — provider inference, the missing-CLI installer
@@ -4688,6 +4689,7 @@ const roomHandlers = createRoomHandlers({
     return res;
   },
   archiveLead: (agentId) => roomWiring.archiveLeadCard(agentId),
+  lastSession: (agentId) => hive.lastSession(agentId) ?? null,
   leadLock: roomWiring.leadLock,
   liveLeadIds: () => ptyManager.list().map((p) => p.id).filter(isLeadAgentId),
   roomPtyCap: () => roomPtyCap(readConfig().roomPtyCap),
@@ -4780,7 +4782,7 @@ registerRealtimeActionIpc({
   },
   spawnAgent: async (opts) => {
     const o = opts as AgentSpawnOptions;
-    const res = await spawnUnderLeadLock(roomWiring.leadLock, { id: o.id, hiveId: o.hive?.id }, () => spawnAgentCore(o, null));
+    const res = await spawnUnlessLead({ id: o.id, hiveId: o.hive?.id }, () => spawnAgentCore(o, null));
     // The renderer roster is only mutated by renderer-initiated hires (AddAgentModal),
     // so a MAIN-initiated spawn is invisible on the floor until we broadcast it. The
     // renderer (useHive) builds the Agent card from this descriptor; addAgent is

@@ -22,6 +22,8 @@ import { inboxNudgeText } from '../../../shared/hiveNudge';
 import { resolveGodName } from '../../../shared/godIdentity';
 import { acquireTerminal, disposeTerminal, resetTerminal, isTerminalAutomationSafe } from '@/components/terminalPool';
 import { isLeadAgentId } from '@shared/roomLead';
+import i18n from '@/i18n';
+import { roomErrorKey } from '@/components/room/roomPanelModel';
 import { canDeliverToAgent, deliverWithAcknowledgement, checkPrecondition } from './queueDelivery';
 import { OFFICE_CAST, DEFAULT_CHARACTER } from '@/scene/office/cast';
 import { useSubagents } from '@/store/subagents';
@@ -1199,6 +1201,18 @@ export function useHive(config: HarnessConfig | null): void {
       const a = useStore.getState().agents.find((x) => x.ptyId === deadId);
       if (!a) return;
       try {
+        // Main restarts a room lead from its project (ADR 0019).
+        if (isLeadAgentId(a.id)) {
+          const res = await window.cth.roomRestartLead(a.id);
+          if (res.ok) reviving.current[deadId] = Date.now();
+          else {
+            delete reviving.current[deadId];
+            // A refused restart leaves the lead as it was; the card says why, so the person can open its room.
+            useStore.getState().updateAgent(a.id, { action: i18n.t('room.restartFailed', { reason: i18n.t(roomErrorKey(res.error)) }) });
+            console.error('[autorevive] room lead restart failed for', a.id, res.error);
+          }
+          return;
+        }
         const cfg = await window.cth.getConfig();
         // Isolated agents run inside their worktree (a.cwd is the base repo); re-enter
         // it if it still exists, else fall back to the base cwd — same as restoreTeam.

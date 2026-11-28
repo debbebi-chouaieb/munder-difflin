@@ -7,7 +7,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const loadTs = require('./load-ts.cjs');
 
-const { createLeadLock, spawnUnderLeadLock, LEAD_BUSY_ERROR } = loadTs('src/main/leadLock.ts');
+const { createLeadLock, spawnUnderLeadLock, spawnUnlessLead, LEAD_BUSY_ERROR, LEAD_SPAWN_REFUSED } = loadTs('src/main/leadLock.ts');
 
 const deferred = () => {
   let resolve;
@@ -98,4 +98,17 @@ test('pty spawn door: a second spawn of the same lead, or one during a room open
   assert.deepEqual(await spawnUnderLeadLock(lock, { id: 'lead--app', hiveId: 'lead--app' }, async () => ({ ok: true })), { ok: false, error: LEAD_BUSY_ERROR });
   open.resolve();
   await opening;
+});
+
+// ADR 0019: spawn options from outside main never start a lead.
+test('outside doors: a lead id is refused and nothing runs; a mismatched lead id too; other agents run', async () => {
+  let ran = 0;
+  const spawn = async () => { ran++; return { ok: true }; };
+  assert.deepEqual(await spawnUnlessLead({ id: 'lead--app', hiveId: 'lead--app' }, spawn), { ok: false, error: LEAD_SPAWN_REFUSED });
+  assert.deepEqual(await spawnUnlessLead({ id: 'lead--app', hiveId: undefined }, spawn), { ok: false, error: LEAD_SPAWN_REFUSED });
+  const mismatch = await spawnUnlessLead({ id: 'worker-1', hiveId: 'lead--app' }, spawn);
+  assert.equal(mismatch.ok, false);
+  assert.equal(ran, 0);
+  assert.deepEqual(await spawnUnlessLead({ id: 'worker-1', hiveId: 'worker-1' }, spawn), { ok: true });
+  assert.equal(ran, 1);
 });

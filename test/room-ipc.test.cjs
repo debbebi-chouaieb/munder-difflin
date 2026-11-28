@@ -53,6 +53,7 @@ function deps(over = {}) {
     roomPtyCap: () => over.cap ?? 3,
     touchLead: (id) => { calls.touch.push(id); },
     leadLastUsed: (id) => over.lastUsed?.[id] ?? 0,
+    lastSession: (id) => over.lastSession?.[id] ?? null,
     leadLock: over.leadLock ?? createLeadLock(),
     log: (m) => calls.log.push(m)
   };
@@ -730,13 +731,14 @@ test('read errors become a code, not a throw', async () => {
 
 // ─── wiring (source scan, like root-guard.test.cjs) ─────────────────────────
 
-test('preload sends only a project id and a request object for room calls', () => {
+test('preload sends only a project id and a request object for room calls; a restart sends a lead id (ADR 0019)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/preload/index.ts'), 'utf8');
   const calls = src.match(/invoke\('room:[A-Za-z]+'[^)]*\)/g) ?? [];
   assert.deepEqual(calls.sort(), [
     "invoke('room:closeTerminal', projectId)",
     "invoke('room:forgetTrust', projectId)",
     "invoke('room:openTerminal', projectId, request ?? null)",
+    "invoke('room:restartLead', leadId)",
     "invoke('room:sessions', projectId)",
     "invoke('room:tickets', projectId)"
   ]);
@@ -840,7 +842,7 @@ test('close: the idle re-check runs right before the kill; false leaves the lead
 });
 
 // ADR 0017: every main door that can start a lead shares the room's lock; the room open's own spawn does not lock twice.
-test('wiring: every spawn core call that can start a lead holds the lead lock', () => {
+test('wiring: every spawn core call that can start a lead refuses it or holds the lead lock (ADR 0017, 0019)', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
   // The room open already holds `open` when it spawns; a worker id is never a lead id.
   const exempt = new Set(['{ ...opts, hive: { ...opts.hive } }, owner', 'spawnOpts, liveWebContents()']);
@@ -852,11 +854,142 @@ test('wiring: every spawn core call that can start a lead holds the lead lock', 
     if (exempt.has(args)) continue;
     // The lock and the call it guards sit within a few lines of each other.
     const before = src.slice(Math.max(0, m.index - 200), m.index);
-    assert.ok(before.includes('spawnUnderLeadLock(roomWiring.leadLock, '), `spawnAgentCore(${args}) is not behind the lead lock`);
+    assert.ok(before.includes('spawnUnderLeadLock(roomWiring.leadLock, ') || before.includes('spawnUnlessLead('), `spawnAgentCore(${args}) neither refuses a lead nor holds the lead lock`);
   }
+  // Spawn options from outside main never start a lead; only main's own install relaunch replays one.
+  assert.match(src, /ipcMain\.handle\('pty:spawn'[\s\S]{0,800}?spawnUnlessLead\(/);
+  assert.match(src, /spawnAgent: async \(opts\) => \{[\s\S]{0,200}?spawnUnlessLead\(/);
+  assert.match(src, /lastSession: \(agentId\) => hive\.lastSession\(agentId\) \?\? null,/);
   // A new call fails here until someone decides whether it can start a lead.
   assert.equal(calls.length, 5, `spawn core calls: ${calls.join(' | ')}`);
   assert.match(src, /leadLock: roomWiring\.leadLock,/);
+});
+
+// ─── restart a lead (ADR 0019) ───────────────────────────────────────────────
+
+test('restart lead: only a lead id of an enabled project', async () => {
+  const { d, calls } = deps();
+  const h = createRoomHandlers(d);
+  for (const bad of [42, null, 'worker-1', 'lead-app', '']) {
+    assert.deepEqual(await h.restartLead(bad, null), { ok: false, error: 'invalid-request' }, String(bad));
+  }
+  assert.deepEqual(await h.restartLead('lead--other', null), { ok: false, error: 'unknown-project' });
+  const off = deps({ project: { enabled: false } });
+  assert.deepEqual(await createRoomHandlers(off.d).restartLead('lead--app', null), { ok: false, error: 'unknown-project' });
+  assert.equal(calls.spawn.length + off.calls.spawn.length, 0);
+});
+
+test('restart lead: a stopped lead opens on its last listed session, a large one without asking', async () => {
+  const { d, calls } = deps({ lastSession: { 'lead--app': BIG } });
+  const res = await createRoomHandlers(d).restartLead('lead--app', null);
+  assert.equal(res.ok, true);
+  assert.equal(calls.spawn.length, 1);
+  assert.equal(calls.spawn[0].resumeSessionId, BIG);
+  assert.equal(calls.spawn[0].command, 'claude', 'main builds the spawn');
+  assert.equal(calls.spawn[0].cwd, 'D:/ws/App-real');
+  assert.deepEqual(calls.kill, []);
+  assert.deepEqual(calls.archive, ['lead--app'], 'the stopped card and its dead terminal are cleared first');
+});
+
+test('restart lead: a session the project no longer lists starts a new one, and says so', async () => {
+  const unlisted = '00000000-0000-4000-8000-0000000000ff';
+  const { d, calls } = deps({ lastSession: { 'lead--app': unlisted } });
+  assert.equal((await createRoomHandlers(d).restartLead('lead--app', null)).ok, true);
+  assert.equal(calls.spawn[0].resume, false);
+  assert.ok(calls.log.some((l) => l.includes('not listed any more')));
+});
+
+test('restart lead: a running lead is stopped, then opened again', async () => {
+  const { d, calls } = deps({ running: ['lead--app'], lastSession: { 'lead--app': ABC } });
+  const res = await createRoomHandlers(d).restartLead('lead--app', null);
+  assert.equal(res.ok, true);
+  assert.notEqual(res.alreadyRunning, true);
+  assert.deepEqual(calls.kill, ['lead--app']);
+  assert.equal(calls.spawn.length, 1);
+  assert.equal(calls.spawn[0].resumeSessionId, ABC);
+});
+
+test('restart lead: a refused open leaves the running lead as it was', async () => {
+  for (const [over, error] of [
+    [{ project: { trusted: false } }, 'needs-trust'],
+    [{ moved: true }, 'project-moved'],
+    [{ project: { claudeTrustToDrop: ['D:/ws/App'] }, retryOk: false }, 'trust-cleanup-failed']
+  ]) {
+    const { d, calls } = deps({ running: ['lead--app'], ...over });
+    const res = await createRoomHandlers(d).restartLead('lead--app', null);
+    assert.equal(res.error, error);
+    assert.deepEqual(calls.kill, [], `${error}: nothing stopped`);
+    assert.deepEqual(calls.archive, []);
+    assert.equal(calls.spawn.length, 0);
+  }
+});
+
+test('restart lead: the stop and the spawn run under one open hold, so a forget in between is refused', async () => {
+  const { d, calls } = deps({ running: ['lead--app'] });
+  const h = createRoomHandlers(d);
+  let during;
+  const kill = d.killLead;
+  d.killLead = (id) => {
+    const res = kill(id);
+    during = { holder: d.leadLock.holder('lead--app') };
+    return res;
+  };
+  const restarting = h.restartLead('lead--app', null);
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(await h.forgetTrust('app'), { ok: false, error: 'busy' });
+  assert.equal((await restarting).ok, true);
+  assert.deepEqual(during, { holder: 'open' });
+  assert.deepEqual(calls.forget, []);
+  assert.equal(d.leadLock.holder('lead--app'), null);
+});
+
+test('restart lead: busy while the lead opens or is held, nothing stopped', async () => {
+  const { d, calls } = deps({ running: ['lead--app'] });
+  let release;
+  const held = d.leadLock.run('lead--app', 'forget', () => new Promise((resolve) => { release = resolve; }));
+  assert.deepEqual(await createRoomHandlers(d).restartLead('lead--app', null), { ok: false, error: 'busy' });
+  assert.deepEqual(calls.kill, []);
+  release();
+  await held;
+});
+
+test('restart lead: a Stop click during the restart waits for it', async () => {
+  const { d, calls } = deps();
+  let release;
+  d.spawnLead = (opts) => new Promise((resolve) => { calls.spawn.push(opts); release = () => resolve({ ok: true }); });
+  const h = createRoomHandlers(d);
+  const restarting = h.restartLead('lead--app', null);
+  await new Promise((r) => setImmediate(r));
+  const closing = h.closeTerminal('app');
+  release();
+  assert.equal((await restarting).ok, true);
+  await closing;
+  assert.equal(calls.spawn.length, 1);
+});
+
+test('restart lead: a failed stop starts nothing', async () => {
+  const { d, calls } = deps({ running: ['lead--app'], killFails: true });
+  assert.deepEqual(await createRoomHandlers(d).restartLead('lead--app', null), { ok: false, error: 'stop-failed' });
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('restart lead: an untrusted project asks for trust in its room, nothing starts', async () => {
+  const { d, calls } = deps({ project: { trusted: false } });
+  const res = await createRoomHandlers(d).restartLead('lead--app', null);
+  assert.equal(res.error, 'needs-trust');
+  assert.equal(calls.spawn.length, 0);
+});
+
+test('wiring: room:restartLead is registered and bridged', () => {
+  const ipc = fs.readFileSync(path.join(__dirname, '..', 'src/main/roomIpc.ts'), 'utf8');
+  assert.match(ipc, /ipcMain\.handle\('room:restartLead', \(evt, leadId: unknown\) => handlers\.restartLead\(leadId, evt\.sender\)\);/);
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'src/preload/index.ts'), 'utf8');
+  assert.match(preload, /roomRestartLead: \(leadId: string\): Promise<OpenTerminalResult> =>\s*ipcRenderer\.invoke\('room:restartLead', leadId\)/);
+  // Restore team, card restart and auto-revive send a lead to main instead of pty:spawn.
+  for (const file of ['src/renderer/src/hooks/useRestoreTeam.ts', 'src/renderer/src/components/CommandCenterPanel.tsx', 'src/renderer/src/hooks/useHive.ts']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    assert.match(src, /if \(isLeadAgentId\(a\.id\)\) \{[\s\S]{0,400}?window\.cth\.roomRestartLead\(a\.id\)/, file);
+  }
 });
 
 test('wiring: room:closeTerminal from IPC never passes a guard', () => {

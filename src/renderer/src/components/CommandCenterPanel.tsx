@@ -19,6 +19,8 @@ import { MemoryGraphPanel } from './MemoryGraphPanel';
 import { useFleetTelemetry } from '@/hooks/useTelemetry';
 import { COMMAND_GROUPS } from '@shared/claudeCommands';
 import { roleForHiveSpawn } from '@shared/agentRole';
+import { isLeadAgentId } from '@shared/roomLead';
+import { roomErrorKey } from './room/roomPanelModel';
 import { useStore, triggerHistoryVisible, type Agent } from '@/store/store';
 import { usePtyParser } from '@/hooks/usePtyParser';
 import {
@@ -419,6 +421,15 @@ function FloorTab({ seed }: { seed: { text: string; seq: number } }) {
     setRestarting(a.id);
     setRestartErrors((errors) => ({ ...errors, [a.id]: '' }));
     try {
+      // A room lead runs the agent its room picks and restarts from main (ADR 0015, 0019).
+      if (isLeadAgentId(a.id)) {
+        if (model !== a.model || (opts.provider !== undefined && opts.provider !== inferAgentProvider(a.command, a.provider))) {
+          throw new Error(t('room.leadModelInRoom'));
+        }
+        const res = await window.cth.roomRestartLead(a.id);
+        if (!res.ok) throw new Error(t(roomErrorKey(res.error)));
+        return;
+      }
       const cfg = await window.cth.getConfig();
       // Respawn on the same CLI this agent already runs on (inferred from its
       // command if not explicitly tagged) so an Antigravity/Codex worker stays

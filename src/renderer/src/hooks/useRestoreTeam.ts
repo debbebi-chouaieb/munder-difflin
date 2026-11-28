@@ -2,6 +2,9 @@ import { useEffect, useSyncExternalStore } from 'react';
 import { useStore, type Agent } from '@/store/store';
 import { buildSpawnCommand, inferAgentProvider, tokenizeCommand, type HarnessConfig } from '@/store/config';
 import { roleForHiveSpawn } from '@shared/agentRole';
+import { isLeadAgentId } from '@shared/roomLead';
+import i18n from '@/i18n';
+import { roomErrorKey } from '@/components/room/roomPanelModel';
 
 /** "Restore team" — respawn every worker from the previous session.
  *
@@ -99,6 +102,20 @@ export function useRestoreTeam(config?: HarnessConfig | null): RestoreTeamState 
         // abort the others — an unhandled rejection here used to make the
         // entire restore a silent no-op after the first bad agent.
         try {
+          // A room lead is rebuilt by main from its project, never from the saved command (ADR 0019).
+          // Main cards it on success, so nothing is added here.
+          if (isLeadAgentId(a.id)) {
+            const res = await window.cth.roomRestartLead(a.id);
+            if (res.ok) {
+              if (res.alreadyRunning) alreadyLive++;
+              else restored++;
+              useStore.getState().removeRestorableAgent(a.id);
+            } else {
+              failures.push(`${a.name}: ${i18n.t('room.restartFailed', { reason: i18n.t(roomErrorKey(res.error)) })}`);
+              console.error('[restore] room lead restart failed for', a.id, res.error);
+            }
+            return null;
+          }
           const provider = inferAgentProvider(a.command, a.provider);
           const command = (a.command ?? '').trim() || (config ? buildSpawnCommand(config, a.model, provider) : '');
           if (!command || !a.cwd) {

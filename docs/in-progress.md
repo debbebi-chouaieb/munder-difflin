@@ -31,6 +31,6 @@ only this section. One bullet per item: what, then (source, date). Remove a bull
 - git:diff/git:showFile resolve relPath from the repo top level, not the agent folder: use `${rev}:./${relPath}` and keep the top level inside an allowed root (security audit, 2026-11-19)
 - runGit honours repo-local config (core.fsmonitor, hooksPath): pass -c core.fsmonitor=false -c core.hooksPath= for read-only git calls (security audit, pre-existing, 2026-11-19)
 - A symlink inside an allowed folder whose target is a network path still reaches the network on realpath/stat; walk links with lstat/readlink first (security audit, 2026-11-19)
-- pty:spawn accepts a renderer-chosen command and cwd, and a spawned cwd becomes a known root: the fs/git allowlist is only as strong as pty:spawn. Review spawn trust before Phase 4 leads (security audit, 2026-11-19)
+- pty:spawn accepts a renderer-chosen command and cwd for every agent but a room lead (ADR 0019 closed leads), and a spawned cwd becomes a known root: the fs/git allowlist is only as strong as pty:spawn (security audit, 2026-11-19; leads 2026-11-28)
 - skills:local scans any local absolute cwd without the known-roots check (low) (security audit, 2026-11-19)
 - Stopped isolated agents: their original repo is a known root only while main runs (worktreeOrigins); store it in the registry so the IDE git panes keep working after a restart (security audit, 2026-11-19)

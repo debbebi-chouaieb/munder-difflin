@@ -1458,6 +1458,8 @@
   "room": {
     "loading": "加载中…",
     "gone": "此项目已不在楼层上。",
+    "leadModelInRoom": "房间负责人运行其房间所选的代理。请在房间中更改。",
+    "restartFailed": "无法重新启动：{{reason}} 请打开它的房间。",
     "close": "关闭房间",
     "errors": {
       "unknown-project": "此项目已不在楼层上。",

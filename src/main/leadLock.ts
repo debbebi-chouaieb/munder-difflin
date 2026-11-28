@@ -26,11 +26,28 @@ export function createLeadLock(): LeadLock {
   };
 }
 
+export const LEAD_SPAWN_REFUSED = 'a room lead starts from its room (room:openTerminal or room:restartLead)';
+
+/**
+ * The doors that take spawn options from outside main (`pty:spawn`, `spawnAgent`):
+ * a lead id is refused (ADR 0019), anything else runs as is. Malformed lead ids are
+ * refused too, so no half-lead id reaches the spawn core.
+ */
+export function spawnUnlessLead<R extends { ok: boolean; error?: string }>(
+  ids: { id: string; hiveId: string | undefined },
+  spawn: () => Promise<R>
+): Promise<R | { ok: false; error: string }> {
+  const lead = leadIdOfSpawn(ids.id, ids.hiveId);
+  if (!lead.ok) return Promise.resolve({ ok: false, error: lead.error });
+  if (lead.leadId) return Promise.resolve({ ok: false, error: LEAD_SPAWN_REFUSED });
+  return spawn();
+}
+
 export const LEAD_BUSY_ERROR = 'room lead busy: it is being opened, started or its trust forgotten; try again';
 
 /**
- * The `pty:spawn` door: a lead spawn runs under a `spawn` hold, any other spawn
- * runs as is. Malformed lead ids are left to the spawn core, which refuses them.
+ * Main's own replays (the install relaunch): a lead spawn runs under a `spawn` hold,
+ * any other spawn runs as is. Malformed lead ids are left to the spawn core, which refuses them.
  */
 export function spawnUnderLeadLock<R extends { ok: boolean; error?: string }>(
   lock: LeadLock,

@@ -5,6 +5,7 @@ import { ipcMain, type WebContents } from 'electron';
 import { isValidProjectId, type Project } from '../shared/project';
 import {
   buildLeadSpawn,
+  isLeadAgentId,
   leadAgentIdFor,
   parseOpenRequest,
   sameOpenRequest,
@@ -14,7 +15,7 @@ import {
   type RoomDone,
   type RoomResult
 } from '../shared/roomLead';
-import type { SessionSummary } from '../shared/sessionList';
+import { isValidSessionId, type SessionSummary } from '../shared/sessionList';
 import type { RoomTickets } from '../shared/ticketSources';
 import type { LeadLock } from './leadLock';
 import type { TrustRevoke } from './roomWiring';
@@ -58,6 +59,8 @@ export interface RoomDeps {
   leadLastUsed: (agentId: string) => number;
   /** Removes the lead's card from the window; harmless when it is already gone. */
   archiveLead: (agentId: string) => void;
+  /** The agent's last recorded CLI session id, if any. */
+  lastSession: (agentId: string) => string | null;
   /** Shared with main's `pty:spawn`, so a restored lead and a forget never overlap (ADR 0017). */
   leadLock: LeadLock;
   log: (line: string) => void;
@@ -74,6 +77,11 @@ export interface RoomHandlers {
   closeTerminal: (projectId: unknown, onlyIf?: () => boolean) => Promise<RoomDone>;
   /** Drops the project's stored trust and Claude's folder trust (ADR 0012); refused while its lead runs or opens. */
   forgetTrust: (projectId: unknown) => Promise<RoomDone>;
+  /**
+   * Restore team, card restart and auto-revive (ADR 0019): stops a running lead,
+   * then opens it again on its last session, through the same checks as an open.
+   */
+  restartLead: (leadId: unknown, sender: WebContents | null) => Promise<OpenTerminalResult>;
 }
 
 export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
@@ -87,7 +95,16 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     return project && (!enabledOnly || project.enabled) ? project : null;
   };
 
-  const open = async (seen: Project, request: OpenRequest, sender: WebContents | null): Promise<OpenTerminalResult> => {
+  /**
+   * `beforeSpawn` runs once every check passed and before the spawn; a non-null
+   * answer ends the open with it. A restart stops the old lead there (ADR 0019).
+   */
+  const open = async (
+    seen: Project,
+    request: OpenRequest,
+    sender: WebContents | null,
+    beforeSpawn?: () => Promise<OpenTerminalResult | null>
+  ): Promise<OpenTerminalResult> => {
     // Read again under the lock: an open that ran meanwhile may have revoked trust and left a drop pending (ADR 0018).
     const project = await findProject(seen.id, true);
     if (!project) return { ok: false, error: 'unknown-project' };
@@ -124,6 +141,10 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
       const summary = await deps.sessions.summaryOf(project.path, request.sessionId);
       if (!summary) return { ok: false, error: 'unknown-session' };
       if (summary.large && !request.confirmLarge) return { ok: false, error: 'large-session', contextTokens: summary.contextTokens };
+    }
+    if (beforeSpawn) {
+      const stopped = await beforeSpawn();
+      if (stopped) return stopped;
     }
     // Saved only once every check passed, so a refused open stores nothing. Main
     // re-reads trust at spawn, so an unsaved "yes" opens untrusted, and says so.
@@ -178,7 +199,24 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
     return { ok: false, error: 'room-cap', cap, closeProjectId: lru.id, closeName: lru.name };
   };
 
-  return {
+  /** Runs an open under the lead's `open` hold, recorded so a close or a second click waits for it. */
+  const startOpen = (
+    project: Project,
+    request: OpenRequest,
+    sender: WebContents | null,
+    beforeSpawn?: () => Promise<OpenTerminalResult | null>
+  ): Promise<OpenTerminalResult> => {
+    const locked = deps.leadLock.run(leadAgentIdFor(project), 'open', () => open(project, request, sender, beforeSpawn));
+    if (!locked) return Promise.resolve({ ok: false, error: 'busy' });
+    const result = locked.catch((e): OpenTerminalResult => {
+      deps.log(`[room] open terminal failed for ${project.id}: ${errText(e)}`);
+      return { ok: false, error: 'spawn-failed' };
+    }).finally(() => opening.delete(project.id));
+    opening.set(project.id, { request, result, sender });
+    return result;
+  };
+
+  const handlers: RoomHandlers = {
     async sessions(projectId) {
       const project = await findProject(projectId, true);
       if (!project) return { ok: false, error: 'unknown-project' };
@@ -230,14 +268,7 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         }
         return shared;
       }
-      const locked = deps.leadLock.run(agentId, 'open', () => open(project, parsed, sender));
-      if (!locked) return { ok: false, error: 'busy' };
-      const result = locked.catch((e): OpenTerminalResult => {
-        deps.log(`[room] open terminal failed for ${project.id}: ${errText(e)}`);
-        return { ok: false, error: 'spawn-failed' };
-      }).finally(() => opening.delete(project.id));
-      opening.set(project.id, { request: parsed, result, sender });
-      return result;
+      return startOpen(project, parsed, sender);
     },
 
     async closeTerminal(projectId, onlyIf) {
@@ -290,8 +321,35 @@ export function createRoomHandlers(deps: RoomDeps): RoomHandlers {
         }
       });
       return forgotten ?? { ok: false, error: 'busy' };
+    },
+
+    async restartLead(leadId, sender) {
+      if (typeof leadId !== 'string' || !isLeadAgentId(leadId)) return { ok: false, error: 'invalid-request' };
+      const project = (await deps.projects()).find((p) => p.enabled && leadAgentIdFor(p) === leadId) ?? null;
+      if (!project) return { ok: false, error: 'unknown-project' };
+      if (deps.leadLock.holder(leadId) !== null || opening.has(project.id)) return { ok: false, error: 'busy' };
+      // The last session, while the project still lists it; else the lead starts a new one.
+      const last = deps.lastSession(leadId);
+      const listed = last !== null && isValidSessionId(last) && (await deps.sessions.summaryOf(project.path, last)) !== null;
+      if (last !== null && !listed) deps.log(`[room] last session of ${leadId} is not listed any more; starting a new one`);
+      // A restart continues work the person already ran, so a large session is not asked again.
+      const request: OpenRequest = { sessionId: listed ? last : null, confirmLarge: true, trust: null, trustPath: null };
+      // The old lead stops only once every open check passed, under the same hold as the spawn:
+      // a refused restart leaves it running, and no forget or other open lands in between.
+      return startOpen(project, request, sender, async () => {
+        if (!deps.isRunning(leadId)) {
+          // A stopped card still holds the dead terminal: clear it so the new lead paints on a fresh one.
+          deps.archiveLead(leadId);
+          return null;
+        }
+        const res = deps.killLead(leadId);
+        if (res.ok) return null;
+        deps.log(`[room] restart could not stop ${leadId}: ${res.error ?? 'no detail'}`);
+        return { ok: false, error: 'stop-failed' };
+      });
     }
   };
+  return handlers;
 }
 
 export function registerRoomIpc(handlers: RoomHandlers): void {
@@ -301,6 +359,7 @@ export function registerRoomIpc(handlers: RoomHandlers): void {
     handlers.openTerminal(projectId, request, evt.sender));
   ipcMain.handle('room:closeTerminal', (_evt, projectId: unknown) => handlers.closeTerminal(projectId));
   ipcMain.handle('room:forgetTrust', (_evt, projectId: unknown) => handlers.forgetTrust(projectId));
+  ipcMain.handle('room:restartLead', (evt, leadId: unknown) => handlers.restartLead(leadId, evt.sender));
 }
 
 function errText(e: unknown): string {
