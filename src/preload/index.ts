@@ -264,6 +264,9 @@ export interface CircuitBreakerConfig {
   tokenVelocityPerMin?: number;
 }
 
+/** Result of a main-owned settings call (ADR 0020): `not-confirmed` when the person said no. */
+export type OwnedConfigResult = { ok: true; config: HarnessConfig } | { ok: false; error: string };
+
 export interface HarnessConfig {
   onboardingComplete: boolean;
   /** Onboarding audience ('technical' | 'non-technical'); drives onboarding copy.
@@ -281,6 +284,8 @@ export interface HarnessConfig {
   autoMode: boolean;
   /** Mirrors src/main/config.ts: off-recipe commands confirmed in main's dialog (ADR 0020). */
   approvedSpawns?: ApprovedSpawn[];
+  /** May the orchestrator hire on its own? Default false. Mirrors src/main/config.ts; main-owned (ADR 0020). */
+  orchestratorMaySpawn?: boolean;
   defaultCommand: string;
   defaultModel?: string;
   /** Which provider+model powers the GOD orchestrator ("Michael"). Default
@@ -722,6 +727,22 @@ const api = {
     ipcRenderer.invoke('config:get'),
   updateConfig: (patch: Partial<HarnessConfig>): Promise<HarnessConfig> =>
     ipcRenderer.invoke('config:update', patch),
+  // Main-owned settings (ADR 0020): config:update ignores these fields. Turning a
+  // switch on, or a folder not picked in the folder dialog, asks in a native dialog.
+  setAutoMode: (on: boolean): Promise<OwnedConfigResult> =>
+    ipcRenderer.invoke('config:setAutoMode', on),
+  setOrchestratorMaySpawn: (on: boolean): Promise<OwnedConfigResult> =>
+    ipcRenderer.invoke('config:setOrchestratorMaySpawn', on),
+  /** First run only; refused once onboarding is complete. */
+  completeOnboarding: (payload: Partial<HarnessConfig> & { harnessHome: string; registeredRepos: string[]; autoMode: boolean }): Promise<OwnedConfigResult> =>
+    ipcRenderer.invoke('config:completeOnboarding', payload),
+  addRepo: (path: string): Promise<OwnedConfigResult> =>
+    ipcRenderer.invoke('repos:add', path),
+  /** Move a registered (or just picked) folder to the front; never asks, ignores anything else. */
+  promoteRepo: (path: string): Promise<OwnedConfigResult> =>
+    ipcRenderer.invoke('repos:promote', path),
+  removeRepo: (path: string): Promise<OwnedConfigResult> =>
+    ipcRenderer.invoke('repos:remove', path),
   /** Forget one confirmed spawn command (ADR 0020); it asks again next time. */
   removeApprovedSpawn: (spawn: ApprovedSpawn): Promise<HarnessConfig> =>
     ipcRenderer.invoke('config:removeApprovedSpawn', spawn),

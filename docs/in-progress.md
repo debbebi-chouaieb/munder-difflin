@@ -32,7 +32,11 @@ only this section. One bullet per item: what, then (source, date). Remove a bull
 - runGit honours repo-local config: `core.fsmonitor` is now off on every call and the worktree diff check skips external diff and textconv (2026-11-28). Still open: hooks run on `worktree add` and `switch`, and clean/smudge filter drivers can run on status and checkout (security audit, pre-existing, 2026-11-19)
 - A symlink inside an allowed folder whose target is a network path still reaches the network on realpath/stat; walk links with lstat/readlink first (security audit, 2026-11-19)
 - pty:spawn and the voice spawn action now check the command against main's recipe; anything else asks in a native dialog, and confirmed commands are kept in `approvedSpawns` (ADR 0020 ticket 1, 2026-11-28). Still open:
-  - ticket 2: `defaultCommand`, `autoMode`, `registeredRepos` and `harnessHome` are still renderer-writable through `config:update`, so a script can make any binary on-recipe. Add `orchestratorMaySpawn` to the main-owned list too: it opens the spawn-requests path, which uses its own `command`
+  - ticket 2 is done (2026-11-28): the fields that decide what an agent runs and where are main-owned, and voice cannot set auto mode. Still open from its review:
+    - `fs:writeFile` can write under the harness home, so a script can drop a file into `hive/spawn-requests/`; the worker tick starts it with its own command and no recipe check once `orchestratorMaySpawn` is on (and a request queued while it is off runs when it is turned on). Needs a decision: refuse renderer writes under the hive root, and/or run spawn requests through the recipe gate
+    - `app:resetAll` runs from the renderer with no native confirm and sets `onboardingComplete` back to false, which reopens `config:completeOnboarding`
+    - a folder picked in any folder dialog counts as picked for repos and the home; the pick has no purpose
+    - `config:ensureHome` still creates any local folder the renderer names (low)
   - ticket 3: a spawned cwd still becomes a known root, and an approval holds in any folder
   - on Windows a CLI that starts through cmd.exe gets args quoted with `\"`, which cmd does not honour (`buildCmdCommandLine` in pty.ts); hive meta (role, capabilities) reaches args after the check
   - a script can open the confirm dialog repeatedly; no per-window rate limit

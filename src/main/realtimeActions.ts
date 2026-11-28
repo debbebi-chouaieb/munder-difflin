@@ -145,8 +145,9 @@ const SETTING_POLICY: Record<string, {
   strongKeepalive: { tier: 'soft', type: 'boolean' },
   autoUpdate: { tier: 'soft', type: 'boolean' },
   realtimeIdleDisconnectMs: { tier: 'soft', type: 'number', min: 30_000, max: 3_600_000 },
-  // confirm: behavior-changing — echo old→new + distinct token
-  autoMode: { tier: 'confirm', type: 'boolean' },
+  // confirm: behavior-changing — echo old→new + distinct token.
+  // autoMode is not here: it is main-owned (ADR 0020) and the spoken confirm is
+  // renderer text, so it is changed only in Settings, behind main's native dialog.
   defaultModel: { tier: 'confirm', type: 'string' },
   godProvider: { tier: 'confirm', type: 'string' },
   godModel: { tier: 'confirm', type: 'string' },

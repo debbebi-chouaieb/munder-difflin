@@ -46,6 +46,7 @@ import { createRoomWiring } from './roomWiring';
 import { spawnUnderLeadLock, spawnUnlessLead } from './leadLock';
 import { spawnRequestFromRenderer } from './ptySpawnRequest';
 import { createSpawnRecipeGate, spawnConfirmDialog, SPAWN_NOT_CONFIRMED } from './spawnRecipeGate';
+import { confirmText, createConfigOwner, createPickedFolders, NOT_CONFIRMED, withoutMainOwnedConfig } from './configOwner';
 import type { ProjectsSnapshot, StoredProjectPatch } from '../shared/project';
 import { withLeadAgentArgs, type MainAgent } from '../shared/mainAgent';
 import { listIssues, listCIRuns } from './github';
@@ -68,7 +69,6 @@ import { registerRealtimeIpc } from './realtime';
 import { ProjectService, globalAgentsDirFor, registerProjectsIpc, projectsPusher } from './projects';
 import { createAgentFileHandlers, registerAgentFileIpc } from './agentFiles';
 import { busyTerminalIn, isLocalAbsolute, isNetworkPath, resolveAllowedRoot, ROOT_REFUSED } from './rootGuard';
-import { withoutWorkspaceRoot } from '../shared/project';
 import { registerRealtimeActionIpc } from './realtimeActions';
 import { initCompletionWatcher } from './realtimeCompletionWatcher';
 import type { TaskCard, InboxMessage } from './realtimeCompletionWatcher';
@@ -327,6 +327,8 @@ const trustPromptGate = new TrustPromptGate();
 const spawnTokens = new SpawnTokens();
 // The gate token of each guarded spawn, by PTY id: a closing terminal releases only its own spawn (ADR 0008).
 const spawnTokenByPty = new Map<string, string>();
+// Folders the native folder dialog returned this session (ADR 0020); only dialog:chooseFolder adds to it.
+const pickedFolders = createPickedFolders();
 // pty:spawn's command check (ADR 0020): off-recipe commands ask in a native dialog in the spawning window.
 const spawnRecipeGate = createSpawnRecipeGate<Electron.WebContents>({
   config: () => readConfig(),
@@ -3221,6 +3223,8 @@ ipcMain.handle('dialog:chooseFolder', async (evt) => {
     title: 'Pick a folder'
   });
   if (res.canceled || res.filePaths.length === 0) return { ok: false as const, error: 'cancelled' };
+  // A person picked it: repos:add and changeHome take it without asking again (ADR 0020).
+  pickedFolders.remember(res.filePaths[0]);
   return { ok: true as const, path: res.filePaths[0] };
 });
 
@@ -3305,12 +3309,16 @@ ipcMain.handle('integrations:test', async (_evt, payload: unknown) => {
 
 // ─── IPC: config ────────────────────────────────────────────────────────────
 ipcMain.handle('config:get', (): HarnessConfig => readConfig());
-ipcMain.handle('config:update', (_evt, rawPatch: Partial<HarnessConfig>) => {
+ipcMain.handle('config:update', (_evt, rawPatch: Partial<HarnessConfig>) =>
   // The workspace root is main-owned (ADR 0001): it is set only through the
   // native dialog in projects:pickWorkspace, which validates it, so a renderer
   // cannot point project scans (and later lead agents) at an arbitrary path.
-  // approvedSpawns is main-owned too (ADR 0020): only main's spawn dialog adds to it.
-  const { approvedSpawns: _confirmedInMain, ...patch } = withoutWorkspaceRoot(rawPatch ?? {});
+  // What an agent runs and where is main-owned too (ADR 0020): see configOwner.ts.
+  applyConfigPatch(withoutMainOwnedConfig(rawPatch ?? {}))
+);
+
+/** The one config write path for renderer-driven changes, with the side effects a change needs. */
+function applyConfigPatch(patch: Partial<HarnessConfig>): HarnessConfig {
   // FIRST RUN: every hive-bound service is started by bootstrapHiveServices(),
   // which runs once at app-ready and early-returns on `!hive.enabled()` — i.e.
   // whenever harnessHome is still null, which is exactly the state a fresh
@@ -3347,7 +3355,30 @@ ipcMain.handle('config:update', (_evt, rawPatch: Partial<HarnessConfig>) => {
     try { bootstrapHiveServices(); } catch (e) { console.error('[hive] bootstrap after onboarding:', e); }
   }
   return next;
+}
+
+// Main-owned settings (ADR 0020 ticket 2): turning a switch on, or a folder no
+// one picked, asks in a native dialog in the asking window.
+const configOwner = createConfigOwner<HarnessConfig, Electron.WebContents>({
+  read: () => readConfig(),
+  write: (patch) => applyConfigPatch(patch),
+  picked: pickedFolders,
+  expand: (path) => expandTilde(path),
+  ensureHome: (path) => (isNetworkPath(path) ? { ok: false, error: ROOT_REFUSED } : ensureHarnessHome(path)),
+  confirm: async (request, owner) => {
+    const { message, detail, yes } = confirmText(request);
+    const options = { type: 'warning' as const, buttons: [yes, 'Cancel'], defaultId: 1, cancelId: 1, noLink: true, message, detail };
+    const win = owner ? BrowserWindow.fromWebContents(owner) : null;
+    const { response } = await (win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options));
+    return response === 0;
+  }
 });
+ipcMain.handle('config:setAutoMode', (evt, on: unknown) => configOwner.setAutoMode(on, evt.sender));
+ipcMain.handle('config:setOrchestratorMaySpawn', (evt, on: unknown) => configOwner.setOrchestratorMaySpawn(on, evt.sender));
+ipcMain.handle('config:completeOnboarding', (_evt, payload: unknown) => configOwner.completeOnboarding(payload));
+ipcMain.handle('repos:add', (evt, path: unknown) => configOwner.addRepo(path, evt.sender));
+ipcMain.handle('repos:promote', (_evt, path: unknown) => configOwner.promoteRepo(path));
+ipcMain.handle('repos:remove', (_evt, path: unknown) => configOwner.removeRepo(path));
 ipcMain.handle('config:removeApprovedSpawn', (_evt, spawn: unknown) => removeApprovedSpawn(spawn));
 ipcMain.handle('config:setAgentTokenCap', (_evt, agentId: unknown, tokenCap: unknown) =>
   setAgentTokenCap(agentId, tokenCap)
@@ -3363,7 +3394,7 @@ ipcMain.handle('config:ensureHome', (_evt, path: unknown) => {
 // optionally MOVING the existing hive + palace and relaunching so every service
 // re-binds against the new root. mode: 'move' copies the data (old kept as a
 // safety net), 'fresh' just re-points and bootstraps an empty home.
-ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
+ipcMain.handle('config:changeHome', async (evt, payload: unknown) => {
   const p = (payload ?? {}) as { newHome?: unknown; mode?: unknown };
   if (typeof p.newHome !== 'string' || !p.newHome) return { ok: false, error: 'invalid newHome' };
   if (isNetworkPath(p.newHome)) return { ok: false, error: ROOT_REFUSED };
@@ -3374,6 +3405,8 @@ ipcMain.handle('config:changeHome', async (_evt, payload: unknown) => {
   // and the app would relaunch against a real directory named "~". Same
   // defence-in-depth-at-the-consumer rule as expandTilde's own doc.
   const newHome = resolve(expandTilde(p.newHome));
+  // A picked folder or a recent home starts silently; any other path asks first (ADR 0020).
+  if (!(await configOwner.homeAllowed(newHome, evt.sender))) return { ok: false, error: NOT_CONFIRMED };
   const oldRaw = readConfig().harnessHome;
   const oldHome = oldRaw ? resolve(oldRaw) : null;
 
@@ -4848,7 +4881,8 @@ registerRealtimeActionIpc({
     try { liveWebContents()?.send('realtime:enqueue', { agentId: id, text }); } catch { /* window gone */ }
   },
   getConfigValue: (key) => (readConfig() as unknown as Record<string, unknown>)[key],
-  patchConfig: (patch) => { writeConfig(patch as Partial<HarnessConfig>); }
+  // Same strip as config:update: a voice action never writes a main-owned field (ADR 0020).
+  patchConfig: (patch) => { applyConfigPatch(withoutMainOwnedConfig(patch as Partial<HarnessConfig>)); }
 });
 
 // rt-12 seam: push detected completions to the live floor; bridge live-flag, queue

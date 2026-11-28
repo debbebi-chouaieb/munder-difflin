@@ -139,13 +139,15 @@ test('only local absolute paths are accepted as a workspace', () => {
 });
 
 test('a generic config patch never carries the workspace root', () => {
+  // The strip lives in configOwner's main-owned list now (ADR 0020), which keeps workspaceRoot.
+  const { withoutMainOwnedConfig } = loadTs('src/main/configOwner.ts');
   assert.deepEqual(
-    shared.withoutWorkspaceRoot({ workspaceRoot: '\\\\attacker\\share', autoMode: true }),
-    { autoMode: true }
+    withoutMainOwnedConfig({ workspaceRoot: '\\\\attacker\\share', telemetryEnabled: true }),
+    { telemetryEnabled: true }
   );
-  assert.deepEqual(shared.withoutWorkspaceRoot({}), {});
+  assert.deepEqual(withoutMainOwnedConfig({}), {});
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
-  assert.match(src, /withoutWorkspaceRoot\(rawPatch/, 'config:update applies the strip');
+  assert.match(src, /applyConfigPatch\(withoutMainOwnedConfig\(rawPatch/, 'config:update applies the strip');
 });
 
 // ─── disk and service ────────────────────────────────────────────────────────

@@ -60,13 +60,13 @@ export function createSpawnRecipeGate<Owner>(deps: SpawnRecipeGateDeps<Owner>) {
 
 // Control and format characters (newlines, bidi overrides, zero-width) shown as
 // escapes, so a crafted arg or folder cannot forge lines or hide text in the dialog.
-const visible = (text: string): string =>
+export const visibleText = (text: string): string =>
   text.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, (c) => `<U+${c.codePointAt(0)!.toString(16).toUpperCase().padStart(4, '0')}>`);
-const quoted = (arg: string): string => visible(arg === '' || /[\s"]/.test(arg) ? JSON.stringify(arg) : arg);
+const quoted = (arg: string): string => visibleText(arg === '' || /[\s"]/.test(arg) ? JSON.stringify(arg) : arg);
 
 /** The dialog text: what runs, where, and a warning when it turns off permission prompts. */
 export function spawnConfirmText(request: SpawnConfirmRequest): { message: string; detail: string } {
-  const lines = [`Command: ${request.argv.map(quoted).join(' ')}`, `Folder: ${visible(request.cwd)}`];
+  const lines = [`Command: ${request.argv.map(quoted).join(' ')}`, `Folder: ${visibleText(request.cwd)}`];
   if (request.skipArgs.length > 0) {
     lines.push('', `Warning: ${request.skipArgs.map(quoted).join(' ')} lets the agent act without asking you first.`);
   }

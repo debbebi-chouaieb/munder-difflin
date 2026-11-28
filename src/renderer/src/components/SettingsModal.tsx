@@ -282,6 +282,7 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
     stage({ audience: next ? 'non-technical' : 'technical' } as Partial<HarnessConfig>);
   };
   const [autoModeOn, setAutoModeOn] = useState<boolean>(cfgX.autoMode !== false);
+  // Staged like every toggle; saveAll sends it to main's own call (ADR 0020).
   const toggleAutoMode = async () => {
     const next = !autoModeOn;
     setAutoModeOn(next);
@@ -351,6 +352,19 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
   const saveAll = async (): Promise<void> => {
     setSaveBusy(true); setSaveNote('');
     try {
+      // Main owns these two (ADR 0020): config:update ignores them, and turning one
+      // on asks in a native dialog. A "no" puts the switch back and saves the rest;
+      // the patch below may still carry them, and main ignores them there.
+      const { autoMode: stagedAutoMode, orchestratorMaySpawn: stagedOrchSpawn } = pending;
+      let declined = false;
+      if (typeof stagedAutoMode === 'boolean') {
+        const res = await window.cth.setAutoMode(stagedAutoMode);
+        if (!res.ok) { declined = true; setAutoModeOn(!stagedAutoMode); }
+      }
+      if (typeof stagedOrchSpawn === 'boolean') {
+        const res = await window.cth.setOrchestratorMaySpawn(stagedOrchSpawn);
+        if (!res.ok) { declined = true; setOrchSpawnOn(!stagedOrchSpawn); }
+      }
       const patch: Partial<HarnessConfig> = {
         ...maxTurnsPatch(),
         ...budgetPatch(),
@@ -367,7 +381,7 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
       await window.cth.updateConfig(patch);
       setPending({});
       setAutoCompactPending(null);
-      setSaveNote(t('settings.saved'));
+      setSaveNote(declined ? t('settings.savedExceptDeclined') : t('settings.saved'));
       setTimeout(() => setSaveNote(''), 1800);
     } catch (e) {
       setSaveNote(e instanceof Error ? e.message : String(e));

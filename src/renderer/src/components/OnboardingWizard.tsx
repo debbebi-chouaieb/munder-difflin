@@ -216,8 +216,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       setBusy(false);
       return;
     }
-    const next = await window.cth.updateConfig({
-      onboardingComplete: true,
+    // One first-run call (ADR 0020): main takes the home, repos and auto mode only while onboarding is open.
+    const res = await window.cth.completeOnboarding({
       audience: audience ?? 'technical',
       harnessHome, // the same trimmed value we just mkdir'd, not the raw field
       registeredRepos: repos,
@@ -227,7 +227,8 @@ export function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
       telemetryEnabled: shareStats
     });
     setBusy(false);
-    onComplete(next);
+    if (!res.ok) { setError(res.error); return; }
+    onComplete(res.config);
   };
 
   return (

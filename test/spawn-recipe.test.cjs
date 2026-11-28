@@ -190,7 +190,8 @@ test('wiring: pty:spawn checks the recipe before spawnAgentCore, config:update n
   const src = fs.readFileSync(path.join(__dirname, '..', 'src/main/index.ts'), 'utf8');
   assert.match(src, /spawnUnlessLead\(\{ id: opts\.id, hiveId: opts\.hive\?\.id \}, async \(\) =>\s*\(await rendererSpawnConfirmed\(opts, owner\)\) \? spawnAgentCore\(opts, owner\) : \{ ok: false, error: SPAWN_NOT_CONFIRMED \}\);/);
   assert.match(src, /function rendererSpawnConfirmed\([^)]*\): Promise<boolean> \{\s*const provider = inferAgentProvider\(opts\.command, opts\.provider \?\? opts\.hive\?\.provider\);\s*return spawnRecipeGate\(\{ provider, argv: \[opts\.command, \.\.\.\(opts\.args \?\? \[\]\)\], cwd: expandTilde\(opts\.cwd\) \}, owner\);/);
-  assert.match(src, /const \{ approvedSpawns: _confirmedInMain, \.\.\.patch \} = withoutWorkspaceRoot\(rawPatch \?\? \{\}\);/);
+  assert.match(src, /ipcMain\.handle\('config:update', \(_evt, rawPatch: Partial<HarnessConfig>\) =>[^]*?applyConfigPatch\(withoutMainOwnedConfig\(rawPatch \?\? \{\}\)\)\s*\);/);
+  assert.ok(loadTs('src/main/configOwner.ts').MAIN_OWNED_CONFIG_KEYS.includes('approvedSpawns'));
   assert.match(src, /ipcMain\.handle\('config:removeApprovedSpawn', \(_evt, spawn: unknown\) => removeApprovedSpawn\(spawn\)\);/);
 });
 

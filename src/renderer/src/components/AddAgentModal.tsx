@@ -294,18 +294,18 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
   const registerProject = async (path: string) => {
     const p = path.trim();
     if (!p) return;
-    const next = [p, ...repos.filter((r) => r !== p)];
-    setRepos(next);
-    setCwd(p);
     try {
-      const updated = await window.cth.updateConfig({ registeredRepos: next });
+      // Main owns the list (ADR 0020): a folder not picked in the folder dialog
+      // asks in a native dialog first, and a "no" registers nothing.
+      const res = await window.cth.addRepo(p);
+      if (!res.ok) return;
       // Main expands `~` when it persists registeredRepos, so adopt the stored
       // (absolute) list — otherwise a typed "~/dev/foo" stays literal in this
       // modal's state and rides along into the spawn.
-      const stored = updated.registeredRepos ?? next;
+      const stored = res.config.registeredRepos ?? [];
       setRepos(stored);
       if (stored[0]) setCwd(stored[0]);
-      onConfigChange?.(updated);
+      onConfigChange?.(res.config);
     } catch { /* best-effort persist */ }
   };
 
@@ -315,12 +315,12 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
    *  is the whole point: a project you are done with should stop cluttering the
    *  picker without anything being deleted. */
   const unregisterProject = async (path: string) => {
-    const next = repos.filter((r) => r !== path);
-    setRepos(next);
+    setRepos(repos.filter((r) => r !== path));
     try {
-      const updated = await window.cth.updateConfig({ registeredRepos: next });
-      setRepos(updated.registeredRepos ?? next);
-      onConfigChange?.(updated);
+      const res = await window.cth.removeRepo(path);
+      if (!res.ok) return;
+      setRepos(res.config.registeredRepos ?? []);
+      onConfigChange?.(res.config);
     } catch { /* best-effort persist */ }
   };
 
@@ -481,11 +481,11 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
     // Remember the folder for the next hire: promote it to the front of the
     // registeredRepos quick-picks (the modal's default cwd) so back-to-back
     // hires land in the same project without re-picking.
+    // Main only reorders a registered folder or adds one picked in the folder dialog (ADR 0020).
     if (projectCwd && repos[0] !== projectCwd) {
-      const nextRepos = [projectCwd, ...repos.filter((r) => r !== projectCwd && r !== cwd)];
       try {
-        const updated = await window.cth.updateConfig({ registeredRepos: nextRepos });
-        onConfigChange?.(updated);
+        const res = await window.cth.promoteRepo(projectCwd);
+        if (res.ok) onConfigChange?.(res.config);
       } catch { /* best-effort */ }
     }
     // A hire manifest may carry a per-agent token budget — apply it to the

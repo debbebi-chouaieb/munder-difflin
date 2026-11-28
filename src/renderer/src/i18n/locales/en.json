@@ -378,6 +378,7 @@
       "never": "Off (never)",
       "idleDisconnectDesc": "How long the voice session stays open with no talking before it auto-closes. The spend cap still stops a runaway session even when this is off."
     },
+    "savedExceptDeclined": "Saved. A setting you did not confirm was left as it was.",
     "saved": "Saved",
     "saving": "Saving…",
     "unsavedChanges": "unsaved changes",

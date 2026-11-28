@@ -334,15 +334,6 @@ export function projectIdForCwd(cwd: string, projects: Pick<Project, 'id' | 'pat
   return null;
 }
 
-/**
- * The workspace root is main-owned: it is set only through the validated folder
- * dialog (projects:pickWorkspace), never through a generic config patch.
- */
-export function withoutWorkspaceRoot<T extends { workspaceRoot?: unknown }>(patch: T): Omit<T, 'workspaceRoot'> {
-  const { workspaceRoot: _mainOwned, ...rest } = patch;
-  return rest;
-}
-
 /** Returns a new file with one project's stored state patched. */
 export function patchStoredProject(file: ProjectsFile, id: string, patch: StoredProjectPatch): ProjectsFile {
   const next: StoredProject = { ...(storedFor(file, id) ?? { enabled: false, parallel: false }) };

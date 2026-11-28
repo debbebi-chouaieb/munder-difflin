@@ -378,6 +378,7 @@
       "never": "关闭（永不）",
       "idleDisconnectDesc": "语音会话在无人说话时保持多久后自动关闭。即使此项关闭，支出上限仍能阻止失控的会话。"
     },
+    "savedExceptDeclined": "已保存。未确认的设置保持原样。",
     "saved": "已保存",
     "saving": "保存中…",
     "unsavedChanges": "有未保存的更改",
