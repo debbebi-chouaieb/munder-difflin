@@ -69,3 +69,17 @@ Folders (folders A):
 - Built in three tickets: (1) shared recipe, check and confirm, `approvedSpawns`; (2) main-owned config fields;
   (3) folders and roots. Ticket 3 needs ticket 2, because `registeredRepos` is the store for confirmed folders.
 - Git hooks on `worktree add` and `switch` and filter drivers stay a separate item.
+
+## Amendment, ticket 2 (2026-11-28)
+Decided with the owner before ticket 2 was built:
+- **Picked folders.** Main records each folder `dialog:chooseFolder` returns this session. `repos:add` and
+  `config:changeHome` take those, and `changeHome` also takes main's own `recentHives`, without asking; any other
+  path asks in a native dialog. Ticket 3 reuses the same set.
+- **No `config:setDefaultCommand`.** No UI writes `defaultCommand`; `config:update` just ignores it.
+- **`orchestratorMaySpawn` is main-owned too** (ticket 1 review): it opens the spawn-requests path, which takes its
+  own command. `config:setOrchestratorMaySpawn` asks when turning it on, like `config:setAutoMode`.
+- **Onboarding** uses one `config:completeOnboarding` call, refused once `onboardingComplete` is true. It sets the
+  home, repos and auto mode the wizard chose without extra dialogs. `onboardingComplete` and `recentHives` become
+  main-owned as well, so a script cannot reopen that call or plant a recent home.
+- A hire's "remember this folder" (`repos:promote`) moves a registered repo to the front, or adds a folder picked
+  this session; it never asks and ignores anything else.
