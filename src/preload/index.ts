@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron';
 import type { AgentProvider } from '../shared/agentProvider';
 import type { HireManifest } from '../shared/hire';
+import type { ApprovedSpawn } from '../shared/spawnRecipe';
 export type { HireManifest } from '../shared/hire';
 import type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
 export type { IntegrationRecord, IntegrationTemplate } from '../shared/integrations';
@@ -278,6 +279,8 @@ export interface HarnessConfig {
   roomIdleMinutes?: number;
   registeredRepos: string[];
   autoMode: boolean;
+  /** Mirrors src/main/config.ts: off-recipe commands confirmed in main's dialog (ADR 0020). */
+  approvedSpawns?: ApprovedSpawn[];
   defaultCommand: string;
   defaultModel?: string;
   /** Which provider+model powers the GOD orchestrator ("Michael"). Default
@@ -719,6 +722,9 @@ const api = {
     ipcRenderer.invoke('config:get'),
   updateConfig: (patch: Partial<HarnessConfig>): Promise<HarnessConfig> =>
     ipcRenderer.invoke('config:update', patch),
+  /** Forget one confirmed spawn command (ADR 0020); it asks again next time. */
+  removeApprovedSpawn: (spawn: ApprovedSpawn): Promise<HarnessConfig> =>
+    ipcRenderer.invoke('config:removeApprovedSpawn', spawn),
   /** Set or clear one per-agent token ceiling against main's latest config. */
   setAgentTokenCap: (agentId: string, tokenCap?: number): Promise<HarnessConfig> =>
     ipcRenderer.invoke('config:setAgentTokenCap', agentId, tokenCap),

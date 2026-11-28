@@ -35,6 +35,9 @@ export interface RendererSpawnRequest {
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const isStringArray = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === 'string');
 const isGridSize = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v > 0 && v <= 1000;
+// Main appends the id after a provider's resume flag, after the recipe check ran,
+// so it must never read as a flag or carry shell characters (ADR 0020).
+const isSessionId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(v.trim());
 
 function hiveMetaFrom(raw: unknown): RendererHiveMeta | null {
   if (!isRecord(raw) || typeof raw.id !== 'string' || typeof raw.name !== 'string' || typeof raw.cwd !== 'string') return null;
@@ -62,7 +65,8 @@ export function spawnRequestFromRenderer(raw: unknown): RendererSpawnRequest | n
   if (raw.cols !== undefined && !isGridSize(raw.cols)) return null;
   if (raw.rows !== undefined && !isGridSize(raw.rows)) return null;
   if (raw.provider !== undefined && typeof raw.provider !== 'string') return null;
-  if (raw.resumeSessionId !== undefined && typeof raw.resumeSessionId !== 'string') return null;
+  // An empty id means "no resume" to the Add Agent dialog.
+  if (raw.resumeSessionId !== undefined && !(raw.resumeSessionId === '' || isSessionId(raw.resumeSessionId))) return null;
   const flag = (v: unknown): boolean | undefined | null => (v === undefined ? undefined : typeof v === 'boolean' ? v : null);
   const isolate = flag(raw.isolate);
   const resume = flag(raw.resume);

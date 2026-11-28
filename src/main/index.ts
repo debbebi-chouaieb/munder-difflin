@@ -14,7 +14,7 @@ import { resolveCommand as resolveCliCommand, isSafeCommandName } from './shellE
 import { initAutoUpdater, abortPendingRestart } from './updater';
 import { RealtimeFloorWatcher } from './realtimeFloorWatcher';
 import {
-  readConfig, writeConfig, setAgentTokenCap, resetConfig, onConfigWritten, ensureHarnessHome, ensureClaudePermissionsAccepted,
+  readConfig, writeConfig, setAgentTokenCap, addApprovedSpawn, approvedSpawns, removeApprovedSpawn, resetConfig, onConfigWritten, ensureHarnessHome, ensureClaudePermissionsAccepted,
   modelForRole, OPS_STANDUP_MISSION, HEARTBEAT_MISSION, COMPACT_MAINTENANCE_MISSION, type HarnessConfig, type ScheduledMission
 } from './config';
 import { listDir, readFileText, readFileBinary, writeFileText, statAbs, expandTilde } from './fs';
@@ -45,6 +45,7 @@ import { hookProvesTurn, TrustPromptGate } from '../shared/claudeTrust';
 import { createRoomWiring } from './roomWiring';
 import { spawnUnderLeadLock, spawnUnlessLead } from './leadLock';
 import { spawnRequestFromRenderer } from './ptySpawnRequest';
+import { createSpawnRecipeGate, spawnConfirmDialog, SPAWN_NOT_CONFIRMED } from './spawnRecipeGate';
 import type { ProjectsSnapshot, StoredProjectPatch } from '../shared/project';
 import { withLeadAgentArgs, type MainAgent } from '../shared/mainAgent';
 import { listIssues, listCIRuns } from './github';
@@ -326,6 +327,16 @@ const trustPromptGate = new TrustPromptGate();
 const spawnTokens = new SpawnTokens();
 // The gate token of each guarded spawn, by PTY id: a closing terminal releases only its own spawn (ADR 0008).
 const spawnTokenByPty = new Map<string, string>();
+// pty:spawn's command check (ADR 0020): off-recipe commands ask in a native dialog in the spawning window.
+const spawnRecipeGate = createSpawnRecipeGate<Electron.WebContents>({
+  config: () => readConfig(),
+  approved: () => approvedSpawns(),
+  approve: (spawn) => { addApprovedSpawn(spawn); },
+  confirm: spawnConfirmDialog<Electron.WebContents>((owner, options) => {
+    const win = owner ? BrowserWindow.fromWebContents(owner) : null;
+    return win ? dialog.showMessageBox(win, options) : dialog.showMessageBox(options);
+  })
+});
 const hookServer = new HookServer(
   hive,
   () => liveWebContents(),
@@ -2653,8 +2664,16 @@ ipcMain.handle('pty:spawn', async (evt, raw: unknown) => {
   // to that floor, then run the shared spawn core.
   const owner = BrowserWindow.fromWebContents(evt.sender)?.webContents ?? null;
   // The renderer never starts a lead here: room:openTerminal and room:restartLead build it in main (ADR 0019).
-  return spawnUnlessLead({ id: opts.id, hiveId: opts.hive?.id }, () => spawnAgentCore(opts, owner));
+  // Off-recipe commands start only after a person confirms them in main's dialog (ADR 0020).
+  return spawnUnlessLead({ id: opts.id, hiveId: opts.hive?.id }, async () =>
+    (await rendererSpawnConfirmed(opts, owner)) ? spawnAgentCore(opts, owner) : { ok: false, error: SPAWN_NOT_CONFIRMED });
 });
+
+/** Main's recipe check for a renderer spawn, with the provider spawnAgentCore infers the same way. */
+function rendererSpawnConfirmed(opts: AgentSpawnOptions, owner: Electron.WebContents | null): Promise<boolean> {
+  const provider = inferAgentProvider(opts.command, opts.provider ?? opts.hive?.provider);
+  return spawnRecipeGate({ provider, argv: [opts.command, ...(opts.args ?? [])], cwd: expandTilde(opts.cwd) }, owner);
+}
 
 /** Core agent-spawn logic — provider inference, the missing-CLI installer
  *  short-circuit, git-worktree isolation, hive provisioning, model/resume flags,
@@ -3290,7 +3309,8 @@ ipcMain.handle('config:update', (_evt, rawPatch: Partial<HarnessConfig>) => {
   // The workspace root is main-owned (ADR 0001): it is set only through the
   // native dialog in projects:pickWorkspace, which validates it, so a renderer
   // cannot point project scans (and later lead agents) at an arbitrary path.
-  const patch = withoutWorkspaceRoot(rawPatch ?? {});
+  // approvedSpawns is main-owned too (ADR 0020): only main's spawn dialog adds to it.
+  const { approvedSpawns: _confirmedInMain, ...patch } = withoutWorkspaceRoot(rawPatch ?? {});
   // FIRST RUN: every hive-bound service is started by bootstrapHiveServices(),
   // which runs once at app-ready and early-returns on `!hive.enabled()` — i.e.
   // whenever harnessHome is still null, which is exactly the state a fresh
@@ -3328,6 +3348,7 @@ ipcMain.handle('config:update', (_evt, rawPatch: Partial<HarnessConfig>) => {
   }
   return next;
 });
+ipcMain.handle('config:removeApprovedSpawn', (_evt, spawn: unknown) => removeApprovedSpawn(spawn));
 ipcMain.handle('config:setAgentTokenCap', (_evt, agentId: unknown, tokenCap: unknown) =>
   setAgentTokenCap(agentId, tokenCap)
 );
@@ -4783,7 +4804,9 @@ registerRealtimeActionIpc({
   },
   spawnAgent: async (opts) => {
     const o = opts as AgentSpawnOptions;
-    const res = await spawnUnlessLead({ id: o.id, hiveId: o.hive?.id }, () => spawnAgentCore(o, null));
+    // The voice action's command comes from the renderer too, and its spoken confirm is renderer text (ADR 0020).
+    const res = await spawnUnlessLead({ id: o.id, hiveId: o.hive?.id }, async () =>
+      (await rendererSpawnConfirmed(o, liveWebContents())) ? spawnAgentCore(o, null) : { ok: false, error: SPAWN_NOT_CONFIRMED });
     // The renderer roster is only mutated by renderer-initiated hires (AddAgentModal),
     // so a MAIN-initiated spawn is invisible on the floor until we broadcast it. The
     // renderer (useHive) builds the Agent card from this descriptor; addAgent is

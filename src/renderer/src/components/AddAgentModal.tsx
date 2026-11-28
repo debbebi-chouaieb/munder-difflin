@@ -430,7 +430,8 @@ export function AddAgentModal({ onClose, config, onConfigChange }: AddAgentModal
     });
     if (!spawnRes.ok) {
       setBusy(false);
-      setError(spawnRes.error ?? 'spawn failed');
+      // The person pressed Cancel in main's start dialog (ADR 0020).
+      setError(spawnRes.error === 'spawn-not-confirmed' ? tr('addAgent.spawnNotConfirmed') : spawnRes.error ?? 'spawn failed');
       return;
     }
     // #2 — the requested resume session id wasn't found anywhere; main fell back

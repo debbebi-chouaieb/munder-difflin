@@ -259,6 +259,12 @@
       "unlimited": "无限制",
       "blankUnlimited": "留空 = 无限制"
     },
+    "approvedSpawns": {
+      "title": "已确认的命令",
+      "desc": "你在启动对话框中允许的命令。在你移除之前，它们再次启动时不会再询问。",
+      "none": "暂无。",
+      "forget": "移除"
+    },
     "autonomy": {
       "autonomy": "自主权",
       "autoOn": "自主模式——智能体无需询问即可行动",
@@ -572,6 +578,7 @@
     "spawning": "生成中…",
     "errName": "必须填写名字",
     "errFolder": "请先选择文件夹",
+    "spawnNotConfirmed": "未启动：命令未被确认。",
     "errCommand": "必须填写命令",
     "hireProgress": "hire 第 {{current}} / {{total}} 项",
     "skipHire": "跳过 hire"

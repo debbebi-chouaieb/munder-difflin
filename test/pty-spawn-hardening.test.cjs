@@ -52,10 +52,19 @@ test('spawn request: a missing or mistyped field refuses the whole request', () 
     { ...BASE, args: 'a b' }, { ...BASE, args: ['ok', 2] },
     { ...BASE, cols: 0 }, { ...BASE, rows: 1.5 }, { ...BASE, cols: 5000 },
     { ...BASE, provider: 7 }, { ...BASE, resumeSessionId: {} },
+    // Main puts the id after a resume flag once the recipe check has run.
+    { ...BASE, resumeSessionId: '--allow-all-tools' }, { ...BASE, resumeSessionId: 'abc & calc' },
+    { ...BASE, resumeSessionId: 'abc\ncalc' }, { ...BASE, resumeSessionId: 'a'.repeat(129) },
     { ...BASE, isolate: 'yes' }, { ...BASE, resume: 1 }, { ...BASE, requireResume: null },
     { ...BASE, hive: 'god' }, { ...BASE, hive: { id: 'x', name: 'y' } }, { ...BASE, hive: { id: 'x', name: 'y', cwd: 'z', capabilities: [1] } }
   ]) {
     assert.equal(spawnRequestFromRenderer(bad), null, JSON.stringify(bad));
+  }
+});
+
+test('spawn request: real session ids and an empty id are kept', () => {
+  for (const id of ['', 'abc', '0f8fad5b-d9cb-469f-a165-70867728950e', 'conv_123', ' abc ']) {
+    assert.equal(spawnRequestFromRenderer({ ...BASE, resumeSessionId: id }).resumeSessionId, id, JSON.stringify(id));
   }
 });
 

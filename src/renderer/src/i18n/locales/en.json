@@ -259,6 +259,12 @@
       "unlimited": "unlimited",
       "blankUnlimited": "blank = unlimited"
     },
+    "approvedSpawns": {
+      "title": "Confirmed commands",
+      "desc": "Commands you allowed in the start dialog. They start again without asking until you forget them.",
+      "none": "None yet.",
+      "forget": "forget"
+    },
     "autonomy": {
       "autonomy": "Autonomy",
       "autoOn": "Autonomous — agents act without asking",
@@ -572,6 +578,7 @@
     "spawning": "spawning...",
     "errName": "Name is required",
     "errFolder": "Pick a folder first",
+    "spawnNotConfirmed": "Not started: the command was not confirmed.",
     "errCommand": "Command is required",
     "hireProgress": "hire {{current}} of {{total}}",
     "skipHire": "skip hire"

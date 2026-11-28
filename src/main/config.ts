@@ -13,6 +13,7 @@ import { defaultMcpDefaults } from '../shared/mcpCatalog';
 import { MAX_AGENT_TOKEN_CAP } from '../shared/tokenCaps';
 import { expandTilde, normalizeHiveHome } from './fs';
 import type { IntegrationRecord } from '../shared/integrations';
+import { isApprovedSpawn, sameSpawn, type ApprovedSpawn } from '../shared/spawnRecipe';
 import {
   DEFAULT_CONTEXT_TRIGGER,
   DEFAULT_ORG_TRIGGER,
@@ -197,6 +198,8 @@ export interface HarnessConfig {
   registeredRepos: string[];
   /** When true, new agents are spawned with --permission-mode bypassPermissions. */
   autoMode: boolean;
+  /** Off-recipe commands the user confirmed in main's spawn dialog (ADR 0020). Main-owned: config:update never writes it. */
+  approvedSpawns?: ApprovedSpawn[];
   /** May the orchestrator ("Michael") spin up agents on its own?
    *
    *  Default FALSE. Spawning an agent is a SPEND decision, so it should not
@@ -713,6 +716,24 @@ export function writeConfig(patch: Partial<HarnessConfig>): HarnessConfig {
  * while reviewing a batch of imported hires). Keep the read-modify-write in the
  * synchronous main process so each call merges with the result of the previous
  * one before returning the updated config to the renderer. */
+/** The confirmed spawns in main's config; a malformed entry is ignored, never trusted. */
+export function approvedSpawns(config: HarnessConfig = readConfig()): ApprovedSpawn[] {
+  return Array.isArray(config.approvedSpawns) ? config.approvedSpawns.filter(isApprovedSpawn) : [];
+}
+
+/** Remember a spawn the user confirmed in main's dialog (ADR 0020). */
+export function addApprovedSpawn(spawn: ApprovedSpawn): HarnessConfig {
+  const current = approvedSpawns();
+  if (current.some((s) => sameSpawn(s, spawn))) return readConfig();
+  return writeConfig({ approvedSpawns: [...current, { provider: spawn.provider, argv: [...spawn.argv] }] });
+}
+
+/** Forget a confirmed spawn, so it asks again next time. Removing needs no dialog. */
+export function removeApprovedSpawn(spawn: unknown): HarnessConfig {
+  if (!isApprovedSpawn(spawn)) throw new Error('invalid approved spawn');
+  return writeConfig({ approvedSpawns: approvedSpawns().filter((s) => !sameSpawn(s, spawn)) });
+}
+
 export function setAgentTokenCap(agentId: unknown, tokenCap: unknown): HarnessConfig {
   if (typeof agentId !== 'string' || agentId.trim().length === 0) {
     throw new Error('invalid agent token cap');

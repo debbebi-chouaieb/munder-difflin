@@ -21,6 +21,7 @@ import { OfficeThemePicker } from './OfficeThemePicker';
 import { McpDefaultsSettings } from './McpDefaultsSettings';
 import { IntegrationsRegistry } from './IntegrationsRegistry';
 import { AiEnginesSettings } from './AiEnginesSettings';
+import { ApprovedSpawnsSettings } from './ApprovedSpawnsSettings';
 import { REALTIME_MODEL } from '@shared/realtimePricing';
 import { RealtimeDevicePicker } from '@/realtime/DevicePicker';
 import { CostHud } from '@/realtime/CostHud';
@@ -1267,6 +1268,10 @@ export function SettingsModal({ config, onClose, initialSection }: SettingsModal
                           </PixelButton>
                         </div>
                       </div>
+
+                      <div style={{ height: 1, background: 'var(--cth-ink-300)', margin: '12px 0' }} />
+
+                      <ApprovedSpawnsSettings />
 
                       <div style={{ height: 1, background: 'var(--cth-ink-300)', margin: '12px 0' }} />
 
